@@ -300,8 +300,14 @@ PADCTL — per-pad extended control
    ...
   0x35C  PADCTL[15]    RW   [7:0]
 
-Wake
-  0x360  WAKE_LATCH    R/W1C [0]     latched "any pad edge" — contributes to IRQ
+Wake (per-pin)
+  0x360  WAKE_LATCH    RO   [0]      combined = |(WAKE_FLAGS & WAKE_MASK).
+                                      Any write W1C-clears ALL flags (legacy).
+  0x364  WAKE_FLAGS    R/W1C [15:0]  per-pin sticky edge flag
+  0x368  WAKE_MASK     RW   [15:0]   per-pin enable (1 = contributes to
+                                      WAKE_LATCH and the IRQ OR)
+  0x36C  WAKE_EDGE     RW   [31:0]   2 bits per pad: 00=off, 01=rise,
+                                      10=fall, 11=both edges
 
 Doorbells
   0x380  DOORBELL_H2C  R/W1C [0]     host → IOP doorbell
@@ -346,7 +352,42 @@ last_in = new_in;
 `clk_iop`). This ensures no edge is metastability-trapped and that edges
 happening between IOP ticks are visible at the next IOP read.
 
-### 8.4 WAKE_LATCH
+### 8.4 Wake system (per-pin edge detection)
+
+Per-pin sticky edge flags with individual mask and edge-mode selection.
+Replaces the old single-bit `WAKE_LATCH` without breaking firmware that
+only uses the combined bit.
+
+```
+WAKE_FLAGS[15:0]   sticky, R/W1C — each bit p is set the cycle the
+                   configured edge on pad_in[p] is detected, cleared by
+                   writing 1 to that bit
+WAKE_MASK[15:0]    RW — only pins with mask[p] = 1 contribute to the
+                   combined wake / IRQ
+WAKE_EDGE[31:0]    RW — 2 bits per pad (bits [2p+1:2p]):
+                         00 = off      01 = rising
+                         10 = falling  11 = both edges
+WAKE_LATCH[0]      RO — reads as |(WAKE_FLAGS & WAKE_MASK);
+                   writing any value clears all flags (legacy).
+```
+
+Firmware ISR pattern:
+
+```c
+void __isr(void) {
+    uint32_t f = WAKE_FLAGS & WAKE_MASK;   // pins that fired
+    if (f & (1u << 5)) { /* handle pad[5] edge */ }
+    if (f & (1u << 9)) { /* handle pad[9] edge */ }
+    WAKE_FLAGS = f;                        // W1C
+}
+```
+
+Edge detection runs on `sysclk` (from the 2-flop synchronized inputs);
+firmware configuration (mask, edge mode) is written from `clk_iop` but
+is stable on every `sysclk` edge because `clk_iop` edges are a subset of
+`sysclk` edges — no CDC flops needed.
+
+### 8.4.1 Legacy WAKE_LATCH
 
 A single flop, clocked by `sysclk`, that latches any edge on any of the
 16 synchronized `pad_in` signals. The edge detector compares consecutive

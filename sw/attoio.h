@@ -34,9 +34,43 @@
 #define PADCTL(i)       (*(volatile uint32_t *)(PADCTL_BASE + ((i) << 2)))
 
 /* ------------------------------------------------------------------ */
-/*  Wake latch (combined pad-edge event)                              */
+/*  Wake system — per-pin edge detect                                 */
+/*    WAKE_LATCH  = OR(WAKE_FLAGS & WAKE_MASK); writing any value     */
+/*                  W1C-clears all flags (legacy).                    */
+/*    WAKE_FLAGS  per-pin sticky flag (R/W1C).                         */
+/*    WAKE_MASK   per-pin enable; only masked-in pads contribute to    */
+/*                WAKE_LATCH and the IRQ OR.                           */
+/*    WAKE_EDGE   2 bits per pad: 00=off 01=rise 10=fall 11=both.     */
 /* ------------------------------------------------------------------ */
 #define WAKE_LATCH      (*(volatile uint32_t *)(ATTOIO_MMIO_BASE + 0x60))
+#define WAKE_FLAGS      (*(volatile uint32_t *)(ATTOIO_MMIO_BASE + 0x64))
+#define WAKE_MASK       (*(volatile uint32_t *)(ATTOIO_MMIO_BASE + 0x68))
+#define WAKE_EDGE       (*(volatile uint32_t *)(ATTOIO_MMIO_BASE + 0x6C))
+
+#define WAKE_EDGE_OFF      0u
+#define WAKE_EDGE_RISE     1u
+#define WAKE_EDGE_FALL     2u
+#define WAKE_EDGE_BOTH     3u
+
+/* Set per-pin edge mode (read-modify-write two bits in WAKE_EDGE). */
+static inline void wake_set_edge(unsigned pin, unsigned mode) {
+    unsigned shift = (pin & 15) * 2;
+    uint32_t v = WAKE_EDGE;
+    v &= ~(3u << shift);
+    v |= (mode & 3u) << shift;
+    WAKE_EDGE = v;
+}
+
+/* Enable / disable wake on a pin (sets/clears its mask bit). */
+static inline void wake_enable(unsigned pin) {
+    WAKE_MASK |= (1u << (pin & 15));
+}
+static inline void wake_disable(unsigned pin) {
+    WAKE_MASK &= ~(1u << (pin & 15));
+}
+
+/* W1C-clear a subset of the per-pin flags. */
+static inline void wake_clear(uint32_t mask) { WAKE_FLAGS = mask; }
 
 /* ------------------------------------------------------------------ */
 /*  Doorbells                                                         */

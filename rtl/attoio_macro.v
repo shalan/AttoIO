@@ -116,11 +116,12 @@ module attoio_macro (
     wire        mmio_ren    = mmio_sel & core_mem_rstrb;
 
     // MMIO sub-block select based on word offset
-    // GPIO:  0x00..0x18 (regs @ 0x300..0x360 incl. PADCTL + WAKE_LATCH)
+    // GPIO:  0x00..0x1B (regs @ 0x300..0x36C incl. PADCTL, WAKE_LATCH,
+    //                   WAKE_FLAGS, WAKE_MASK, WAKE_EDGE)
     // Ctrl:  0x20..0x21 (doorbells)
     // SPI:   0x24..0x26
     // Timer: 0x28..0x2F
-    wire mmio_is_gpio  = (mmio_woff <= 6'h18);
+    wire mmio_is_gpio  = (mmio_woff <= 6'h1B);
     wire mmio_is_ctrl  = (mmio_woff >= 6'h20) && (mmio_woff <= 6'h21);
     wire mmio_is_spi   = (mmio_woff >= 6'h24) && (mmio_woff <= 6'h26);
     wire mmio_is_timer = (mmio_woff >= 6'h28) && (mmio_woff <= 6'h2F);
