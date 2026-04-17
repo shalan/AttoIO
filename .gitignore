@@ -1,0 +1,33 @@
+# ---- Build / tool outputs ------------------------------------------------
+build/
+*.log
+*.vcd
+*.fst
+*.vvp
+*.wdb
+*.jou
+*.out
+*.tmp
+
+# ---- Editor / OS cruft ---------------------------------------------------
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+.claude/
+
+# ---- Python ---------------------------------------------------------------
+__pycache__/
+*.pyc
+
+# ---- Synthesis / PnR intermediates ---------------------------------------
+*.syn.v.bak
+*.sta.out
+*.rpt
+*.sdf
+*.spef
+*.def.bak

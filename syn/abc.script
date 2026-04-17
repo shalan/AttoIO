@@ -1,0 +1,19 @@
+# Std-cell adaptation of the abc9 recipe for sky130.
+strash
+&get -n
+&scorr
+&sweep
+&dc2
+&dch -f
+&ps
+&nf {D}
+&mfs
+&ps
+&put
+buffer -c
+topo
+stime -c
+upsize {D} -c
+dnsize {D} -c
+stime -p
+print_stats -m
