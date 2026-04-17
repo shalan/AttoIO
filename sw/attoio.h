@@ -59,6 +59,49 @@
 #define SPI_STATUS_BUSY     (1u << 0)
 
 /* ------------------------------------------------------------------ */
+/*  TIMER — 24-bit counter + 4 compares + 1 input capture            */
+/* ------------------------------------------------------------------ */
+#define TIMER_CNT       (*(volatile uint32_t *)(ATTOIO_MMIO_BASE + 0xA0))
+#define TIMER_CTL       (*(volatile uint32_t *)(ATTOIO_MMIO_BASE + 0xA4))
+#define TIMER_STATUS    (*(volatile uint32_t *)(ATTOIO_MMIO_BASE + 0xA8))
+#define TIMER_CAP       (*(volatile uint32_t *)(ATTOIO_MMIO_BASE + 0xAC))
+#define TIMER_CMP(i)    (*(volatile uint32_t *)(ATTOIO_MMIO_BASE + 0xB0 + ((i) << 2)))
+
+/* TIMER_CTL bits */
+#define TIMER_CTL_EN            (1u << 0)
+#define TIMER_CTL_RESET         (1u << 1)   /* write-1, self-clears */
+#define TIMER_CTL_AUTO_RELOAD   (1u << 2)   /* reset CNT on CMP0 match */
+#define TIMER_CTL_CAP_PIN_SHIFT 3           /* capture pad index [6:3] */
+#define TIMER_CTL_CAP_PIN_MASK  (0xFu << 3)
+#define TIMER_CTL_CAP_EDGE_SHIFT 7          /* [8:7] 00=off 01=rise 10=fall 11=both */
+#define TIMER_CTL_CAP_EDGE_MASK (0x3u << 7)
+#define TIMER_CTL_CAP_IRQ_EN    (1u << 9)
+
+/* TIMER_STATUS flags (R/W1C) */
+#define TIMER_STATUS_MATCH0     (1u << 0)
+#define TIMER_STATUS_MATCH1     (1u << 1)
+#define TIMER_STATUS_MATCH2     (1u << 2)
+#define TIMER_STATUS_MATCH3     (1u << 3)
+#define TIMER_STATUS_CAPTURE    (1u << 4)
+
+/* TIMER_CMPx bit layout helpers */
+#define TIMER_CMP_VAL(v)        ((v) & 0xFFFFFFu)
+#define TIMER_CMP_PAD(p)        (((p) & 0xFu) << 24)
+#define TIMER_CMP_EN            (1u << 28)
+#define TIMER_CMP_IRQ_EN        (1u << 29)
+#define TIMER_CMP_PAD_TOGGLE    (1u << 30)
+
+/* Quick-use builder: enable channel i to match at value v, no pad, IRQ on match */
+static inline void timer_cmp_set(unsigned i, uint32_t v) {
+    TIMER_CMP(i) = TIMER_CMP_VAL(v) | TIMER_CMP_EN | TIMER_CMP_IRQ_EN;
+}
+/* Channel i drives pad p, matching at value v (PWM carrier) */
+static inline void timer_cmp_pwm(unsigned i, uint32_t v, unsigned pad) {
+    TIMER_CMP(i) = TIMER_CMP_VAL(v) | TIMER_CMP_PAD(pad) |
+                   TIMER_CMP_EN | TIMER_CMP_PAD_TOGGLE;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Mailbox                                                           */
 /* ------------------------------------------------------------------ */
 #define MAILBOX         ((volatile uint8_t *) ATTOIO_MAILBOX_BASE)

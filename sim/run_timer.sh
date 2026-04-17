@@ -1,27 +1,23 @@
 #!/usr/bin/env bash
-# Build the empty firmware, then run the Phase-0 acceptance testbench.
+# Build timer_pwm firmware + run tb_timer.
 set -e
 
 PROJ_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJ_ROOT"
 
-FW="${FW:-empty}"
-
-echo "=== Building firmware: $FW ==="
-make -C sw FW="$FW" >/dev/null
-HEX="$PROJ_ROOT/build/sw/$FW/$FW.hex"
+make -C sw FW=timer_pwm >/dev/null
+HEX="$PROJ_ROOT/build/sw/timer_pwm/timer_pwm.hex"
 [[ -f "$HEX" ]] || { echo "ERROR: hex not found: $HEX"; exit 1; }
 
 mkdir -p build/sim
 
-echo "=== Compiling testbench ==="
 iverilog -g2005-sv \
     -DBENCH \
     -DNRV_SINGLE_PORT_REGF \
     -DNRV_SHARED_ADDER \
     -DNRV_SERIAL_SHIFT \
     -DFW_HEX=\"$HEX\" \
-    -o build/sim/tb_fw_boot.vvp \
+    -o build/sim/tb_timer.vvp \
     rtl/attoio_memmux.v \
     rtl/attoio_gpio.v \
     rtl/attoio_ctrl.v \
@@ -30,7 +26,6 @@ iverilog -g2005-sv \
     rtl/attoio_macro.v \
     models/dffram_rtl.v \
     ../frv32/rtl/attorv32.v \
-    sim/tb_fw_boot.v
+    sim/tb_timer.v
 
-echo "=== Running ==="
-cd build/sim && vvp tb_fw_boot.vvp
+cd build/sim && vvp tb_timer.vvp

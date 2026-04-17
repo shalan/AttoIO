@@ -20,6 +20,7 @@ iverilog -g2005-sv \
     "$PROJ_DIR/sim/tb_attoio.v" \
     "$PROJ_DIR/rtl/attoio_macro.v" \
     "$PROJ_DIR/rtl/attoio_memmux.v" \
+    "$PROJ_DIR/rtl/attoio_timer.v" \
     "$PROJ_DIR/rtl/attoio_gpio.v" \
     "$PROJ_DIR/rtl/attoio_ctrl.v" \
     "$PROJ_DIR/rtl/attoio_spi.v" \

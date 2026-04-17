@@ -311,6 +311,17 @@ SPI shift helper
   0x390  SPI_DATA      RW   [7:0]    write = load TX + start; read = RX shift reg
   0x394  SPI_CFG       RW   [7:0]    pin select + CPOL/CPHA (see §10)
   0x398  SPI_STATUS    RO   [0]      bit 0 = busy
+
+TIMER — 24-bit counter + 4 compares + 1 capture (see §11)
+  0x3A0  TIMER_CNT     RO    [23:0]   current count
+  0x3A4  TIMER_CTL     RW    see §11  enable / reset / auto-reload /
+                                       capture pad+edge / capture IRQ en
+  0x3A8  TIMER_STATUS  R/W1C [4:0]    match0..3 flags + capture flag
+  0x3AC  TIMER_CAP     RO    [23:0]   snapshot of CNT on selected pad edge
+  0x3B0  TIMER_CMP0    RW    see §11  compare + pad index + en / IRQ / toggle
+  0x3B4  TIMER_CMP1    RW
+  0x3B8  TIMER_CMP2    RW
+  0x3BC  TIMER_CMP3    RW
 ```
 
 ### 8.2 No pin-change interrupt registers
@@ -440,6 +451,73 @@ CS management is firmware's responsibility via normal `GPIO_OUT_CLR` /
 ### 10.4 Resource cost
 
 ~80 cells, ~20 flops (two 8-bit shift registers + 4-bit counter + control).
+
+## 10A. TIMER block
+
+A minimal 24-bit timer with four compare channels and one input-capture
+channel, clocked by `clk_iop`. Unlocks hardware-assisted PWM (motors,
+LEDs, audio carriers), precise bit-time generation (UART, I²C, WS2812),
+and edge-timestamping (IR decoder, ultrasonic, quadrature).
+
+### 10A.1 Registers
+
+| Offset | Name | Access | Layout |
+|---:|---|---|---|
+| `0x3A0` | `TIMER_CNT` | RO | `[23:0]` current count |
+| `0x3A4` | `TIMER_CTL` | RW | `[0]` enable, `[1]` write-1 reset, `[2]` auto-reload (CNT←0 on CMP0 match), `[6:3]` capture pad idx, `[8:7]` capture edge (00=off, 01=rise, 10=fall, 11=both), `[9]` capture IRQ enable |
+| `0x3A8` | `TIMER_STATUS` | R/W1C | `[0..3]` CMP0..3 match flags, `[4]` capture flag |
+| `0x3AC` | `TIMER_CAP` | RO | `[23:0]` CNT snapshot at last capture event |
+| `0x3B0` | `TIMER_CMP0` | RW | `[23:0]` match value, `[27:24]` pad idx, `[28]` enable, `[29]` IRQ enable, `[30]` toggle pad on match |
+| `0x3B4` | `TIMER_CMP1` | RW | same layout |
+| `0x3B8` | `TIMER_CMP2` | RW | same layout |
+| `0x3BC` | `TIMER_CMP3` | RW | same layout |
+
+### 10A.2 Operation
+
+- Free-running 24-bit counter clocked by `clk_iop`, incrementing when
+  `TIMER_CTL.enable = 1`. At 30 MHz, full wrap ≈ 0.56 s; plenty for any
+  single-frame IR / audio / motor cadence.
+- Writing `TIMER_CTL[1] = 1` clears `CNT` on the same edge.
+- **Auto-reload mode** (`TIMER_CTL[2]`) resets `CNT` to 0 the cycle CMP0
+  matches, giving a periodic carrier.
+- Each CMP channel with `enable = 1`:
+  - raises its match flag on `CNT == value` (sticky, R/W1C);
+  - if `IRQ enable` is set, contributes to `timer_irq`;
+  - if `toggle pad` is set, XORs the selected pad's output flop on
+    every match. The pad's `pad_oe` is forced high while the channel is
+    enabled so the toggle reaches the external pin.
+- **Input capture**: on the selected pad's selected edge, `CNT` is
+  sampled into `TIMER_CAP` and the capture flag fires. Edge detection
+  uses the `clk_iop`-synchronized pad input.
+
+### 10A.3 IRQ routing
+
+`timer_irq` = OR of `(match_flag_i & IRQ_enable_i)` for i in 0..3,
+plus `(capture_flag & capture IRQ enable)`.
+
+The macro's `iop_irq` into the core is now
+`DOORBELL_H2C | WAKE_LATCH | timer_irq`.
+
+### 10A.4 Reset behavior
+
+The timer is reset on either global `rst_n` **or** `IOP_CTRL.reset = 1`.
+This ensures every IOP firmware boot starts with a clean counter, no
+enabled channels, and no pad drivers overriding GPIO.
+
+### 10A.5 Example use-cases
+
+| Use | Configuration |
+|---|---|
+| 38 kHz IR carrier | CMP0 = `clk_iop/(2*38000)` − 1, auto-reload, toggle-pad on CMP0 |
+| 4-ch PWM @ 1 kHz, 8-bit duty | CMP0 defines period (reloaded), CMP1/2/3 set duty edges via IRQ ISR |
+| UART bit timing | CMP0 = baud-period, auto-reload, IRQ fires bit sample/shift |
+| IR RX / HC-SR04 / encoder tachometer | capture channel on the input pin, edge = both |
+| Periodic ISR (e.g. motor control) | auto-reload + CMP0 IRQ, no pad toggle |
+
+### 10A.6 Resource cost (estimate)
+
+~250 cells — 24-bit counter + 4×(24-bit comparator + per-channel
+control) + 1 capture register + edge-detect on 16-pin bus + pad mux.
 
 ## 11. Clocking
 

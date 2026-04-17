@@ -36,6 +36,7 @@ read_verilog -sv rtl/attoio_memmux.v
 read_verilog -sv rtl/attoio_gpio.v
 read_verilog -sv rtl/attoio_ctrl.v
 read_verilog -sv rtl/attoio_spi.v
+read_verilog -sv rtl/attoio_timer.v
 read_verilog -sv rtl/attoio_macro.v
 read_verilog -sv ../frv32/rtl/attorv32.v
 

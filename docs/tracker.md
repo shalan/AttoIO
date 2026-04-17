@@ -16,9 +16,9 @@ Legend: ☐ = not started · ◐ = in progress · ☑ = done · ✗ = won't do
 | H2 | Yosys synthesis flow (sky130_fd_sc_hd) | ☑ | `syn/synth.ys`, clean |
 | H3 | OpenSTA flow (SDC @ 75 / 30 MHz) | ☑ | clk_iop MET; sysclk half-cycle CG path needs I/O-delay retune |
 | H4 | Real DFFRAM netlists in-tree (`models/dffram_gen/`) | ☑ | 25,509 cells, 0.27 mm², ~33.9 mW (10 % act.) |
-| H5 | **TIMER block** (24-bit CNT + 4×CMP + 1 capture + PWM-out) | ☐ | Phase 0.5 |
-| H6 | **Per-pin WAKE flags + mask** (replace combined `WAKE_LATCH`) | ☐ | Phase 0.5 |
-| H7 | **Watchdog timer** (magic-key arm, overflow → NMI + host alert) | ☐ | Phase 0.5 |
+| H5 | **TIMER block** (24-bit CNT + 4×CMP + 1 capture + PWM-out) | ☑ | Phase 0.5a — `rtl/attoio_timer.v`, +1256 cells, tb_timer PASS |
+| H6 | **Per-pin WAKE flags + mask** (replace combined `WAKE_LATCH`) | ☐ | Phase 0.5b |
+| H7 | **Watchdog timer** (magic-key arm, overflow → NMI + host alert) | ☐ | Phase 0.5c |
 
 ---
 
@@ -139,3 +139,14 @@ Plan: `docs/examples_plan.md` · each example links to its firmware
 | Tag | Date | Contents |
 |---|---|---|
 | (none yet) | — | v0.1 target: infra + TIMER/WAKE/WDT additions + Tier-1 examples |
+
+## Area / timing history
+
+| Phase | Cells (glue) | Area (top)     | Setup WNS (sysclk) | Hold WNS | Power @10% |
+|---|---:|---:|---:|---:|---:|
+| H4 (real DFFRAM) | 4,858 | 269,416 µm² | −0.15 ns | +0.19 ns | 33.9 mW |
+| H5 (+ TIMER)    | 6,114 | 282,029 µm² | −0.17 ns | +0.20 ns | 37.1 mW |
+
+The sysclk violation (153 ps) is pre-existing — same host-bus →
+SRAM-B clock-gating-check path we identified in H3. TIMER is purely on
+the clk_iop domain and adds zero delay there.

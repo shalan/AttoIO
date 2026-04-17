@@ -48,7 +48,8 @@ module attoio_macro (
     // IOP control signals
     wire        iop_reset;
     wire        iop_nmi;
-    wire        iop_irq;
+    wire        iop_irq_base;   // from attoio_ctrl (doorbell + wake)
+    wire        iop_irq;        // iop_irq_base | timer_irq
     wire        wake_latch;
 
     // Core memory interface
@@ -115,19 +116,23 @@ module attoio_macro (
     wire        mmio_ren    = mmio_sel & core_mem_rstrb;
 
     // MMIO sub-block select based on word offset
-    // GPIO: 0x00..0x18 (word 0x00..0x06), PADCTL: 0x08..0x17, WAKE: 0x18
-    // Doorbells: 0x20..0x21 (0x380, 0x384)
-    // SPI: 0x24..0x26 (0x390, 0x394, 0x398)
-    wire mmio_is_gpio = (mmio_woff <= 6'h18);
-    wire mmio_is_ctrl = (mmio_woff >= 6'h20) && (mmio_woff <= 6'h21);
-    wire mmio_is_spi  = (mmio_woff >= 6'h24) && (mmio_woff <= 6'h26);
+    // GPIO:  0x00..0x18 (regs @ 0x300..0x360 incl. PADCTL + WAKE_LATCH)
+    // Ctrl:  0x20..0x21 (doorbells)
+    // SPI:   0x24..0x26
+    // Timer: 0x28..0x2F
+    wire mmio_is_gpio  = (mmio_woff <= 6'h18);
+    wire mmio_is_ctrl  = (mmio_woff >= 6'h20) && (mmio_woff <= 6'h21);
+    wire mmio_is_spi   = (mmio_woff >= 6'h24) && (mmio_woff <= 6'h26);
+    wire mmio_is_timer = (mmio_woff >= 6'h28) && (mmio_woff <= 6'h2F);
 
     // ====================================================================
     // MMIO read-data mux
     // ====================================================================
-    assign mmio_rdata = mmio_is_gpio ? gpio_mmio_rdata :
-                        mmio_is_ctrl ? ctrl_iop_mmio_rdata :
-                        mmio_is_spi  ? spi_mmio_rdata :
+    wire [31:0] timer_mmio_rdata;
+    assign mmio_rdata = mmio_is_gpio  ? gpio_mmio_rdata :
+                        mmio_is_ctrl  ? ctrl_iop_mmio_rdata :
+                        mmio_is_spi   ? spi_mmio_rdata :
+                        mmio_is_timer ? timer_mmio_rdata :
                         32'h0;
 
     // ====================================================================
@@ -283,10 +288,23 @@ module attoio_macro (
         .spi_mosi_val (spi_mosi_val),
 
         .pad_in     (pad_in),
-        .pad_out    (pad_out),
-        .pad_oe     (pad_oe),
+        .pad_out    (gpio_pad_out),
+        .pad_oe     (gpio_pad_oe),
         .pad_ctl    (pad_ctl)
     );
+
+    // ====================================================================
+    // Pad output mux — timer-driven pads override GPIO on selected pins.
+    // When timer_pad_sel[p] = 1, the pin's drive value is timer_pad_val[p]
+    // and its OE is forced high so the toggle reaches the pad.
+    // ====================================================================
+    wire [15:0] gpio_pad_out;
+    wire [15:0] gpio_pad_oe;
+    wire [15:0] timer_pad_sel;
+    wire [15:0] timer_pad_val;
+
+    assign pad_out = (gpio_pad_out & ~timer_pad_sel) | (timer_pad_val & timer_pad_sel);
+    assign pad_oe  = gpio_pad_oe | timer_pad_sel;
 
     // ====================================================================
     // Control — doorbells + IOP_CTRL
@@ -313,7 +331,7 @@ module attoio_macro (
 
         .iop_reset      (iop_reset),
         .iop_nmi        (iop_nmi),
-        .iop_irq        (iop_irq),
+        .iop_irq        (iop_irq_base),
         .irq_to_host    (irq_to_host)
     );
 
@@ -352,5 +370,33 @@ module attoio_macro (
         .spi_sck_val  (spi_sck_val),
         .spi_mosi_val (spi_mosi_val)
     );
+
+    // ====================================================================
+    // TIMER — 24-bit counter + 4 compares + 1 capture
+    // Resets on global rst_n OR whenever firmware is held in reset so
+    // every IOP boot starts with a clean timer.
+    // ====================================================================
+    wire timer_irq;
+    attoio_timer u_timer (
+        .clk_iop      (clk_iop),
+        .rst_n        (rst_n & ~iop_reset),
+
+        .mmio_woff    (mmio_woff),
+        .mmio_wdata   (core_mem_wdata),
+        .mmio_wmask   (core_mem_wmask),
+        .mmio_wen     (mmio_wen & mmio_is_timer),
+        .mmio_ren     (mmio_ren & mmio_is_timer),
+        .mmio_rdata   (timer_mmio_rdata),
+
+        .pad_in_sync  (pad_in_iop_sync),
+
+        .timer_irq    (timer_irq),
+
+        .timer_pad_sel (timer_pad_sel),
+        .timer_pad_val (timer_pad_val)
+    );
+
+    // Combine timer IRQ into the core interrupt line
+    assign iop_irq = iop_irq_base | timer_irq;
 
 endmodule
