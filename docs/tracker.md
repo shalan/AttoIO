@@ -44,7 +44,7 @@ Plan: `docs/examples_plan.md` · each example links to its firmware
 
 | # | Example | Status | Commit |
 |---|---|---|---|
-| E1 | UART TX + RX (9600 – 1 Mbaud) | ◐ | 1a TX done; pad[0] @ 115200; TIMER-paced. 1b RX next. |
+| E1 | UART TX + RX (9600 – 1 Mbaud) | ☑ | 1a: TX "Hello, AttoIO" @ 115200. 1b: RX via CMP1 1.5-bit offset + CMP0 auto-reload, echo "ABCD" round-trip. |
 | E2 | SPI master | ☐ | — |
 | E3 | I²C master | ☐ | — |
 | E4 | WS2812 LED driver | ☐ | — |
