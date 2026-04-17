@@ -44,7 +44,7 @@ Plan: `docs/examples_plan.md` · each example links to its firmware
 
 | # | Example | Status | Commit |
 |---|---|---|---|
-| E1 | UART TX + RX (9600 – 1 Mbaud) | ☐ | — |
+| E1 | UART TX + RX (9600 – 1 Mbaud) | ◐ | 1a TX done; pad[0] @ 115200; TIMER-paced. 1b RX next. |
 | E2 | SPI master | ☐ | — |
 | E3 | I²C master | ☐ | — |
 | E4 | WS2812 LED driver | ☐ | — |
