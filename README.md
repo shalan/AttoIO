@@ -116,7 +116,7 @@ The synthesis script targets
 
 ## Author
 
-Mohamed Shalan ([@shalan](https://github.com/shalan))
+Mohamed Shalan ([@shalan](https://github.com/shalan)) — <mshalan@aucegypt.edu>
 
 ## License
 
