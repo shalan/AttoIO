@@ -328,6 +328,12 @@ TIMER — 24-bit counter + 4 compares + 1 capture (see §11)
   0x3B4  TIMER_CMP1    RW
   0x3B8  TIMER_CMP2    RW
   0x3BC  TIMER_CMP3    RW
+
+WDT — 16-bit watchdog (see §12)
+  0x3C0  WDT_COUNT     RW    [15:0]   write: reload value (also pets);
+                                       read: current count
+  0x3C4  WDT_CTL       RW    [0]=enable, [1]=host_alert_en
+  0x3C8  WDT_STATUS    R/W1C [0]      sticky expired flag
 ```
 
 ### 8.2 No pin-change interrupt registers
@@ -559,6 +565,48 @@ enabled channels, and no pad drivers overriding GPIO.
 
 ~250 cells — 24-bit counter + 4×(24-bit comparator + per-channel
 control) + 1 capture register + edge-detect on 16-pin bus + pad mux.
+
+## 10B. Watchdog timer (WDT)
+
+A small 16-bit watchdog to catch firmware hangs. Reset-on-bootup state
+is disabled; firmware arms it when it wants hang protection.
+
+### 10B.1 Registers
+
+| Offset | Name | Access | Width | Description |
+|---:|---|---|---|---|
+| `0x3C0` | `WDT_COUNT`  | RW    | [15:0] | Write: reload value (also "pets"). Read: current down-count. |
+| `0x3C4` | `WDT_CTL`    | RW    | [1:0]  | `[0]` enable, `[1]` host_alert_en |
+| `0x3C8` | `WDT_STATUS` | R/W1C | [0]    | Sticky expired flag |
+
+### 10B.2 Operation
+
+1. Firmware writes an arbitrary 16-bit reload to `WDT_COUNT` and sets
+   `WDT_CTL.enable = 1`. The counter decrements every `clk_iop`.
+2. To pet, firmware re-writes `WDT_COUNT` with the reload value. The
+   write takes priority over the decrement in the same cycle.
+3. On down-count from 1 → 0 while enabled:
+   - `WDT_STATUS.expired` latches high (sticky until W1C).
+   - `wdt_nmi` asserts to the core (level-held while `expired` is set,
+     so the core picks it up at the next `S_EXECUTE`).
+   - If `WDT_CTL.host_alert_en = 1`, a one-cycle pulse drives the
+     macro's `irq_to_host` (OR'd with `DOORBELL_C2H`).
+4. The ISR W1C-clears `WDT_STATUS`, which drops `wdt_nmi`. Firmware
+   typically also sets `WDT_CTL = 0` to disarm while handling.
+
+At `clk_iop = 30 MHz` the max timeout is 2^16 / 30e6 ≈ 2.18 ms.
+
+### 10B.3 Reset behavior
+
+`WDT_CTL.enable` clears on both global `rst_n` and on firmware reset
+(`IOP_CTRL.reset` assertion), so every boot starts disarmed. The
+sticky `expired` flag is not preserved across IOP reset (matches
+typical "firmware must arm me" semantics).
+
+### 10B.4 Resource cost
+
+~80 cells — 16-bit counter + 16-bit comparator with 0 + small state
+(enable, host_alert_en, expired) + MMIO decode.
 
 ## 11. Clocking
 

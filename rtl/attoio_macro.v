@@ -47,9 +47,13 @@ module attoio_macro (
 
     // IOP control signals
     wire        iop_reset;
-    wire        iop_nmi;
     wire        iop_irq_base;   // from attoio_ctrl (doorbell + wake)
     wire        iop_irq;        // iop_irq_base | timer_irq
+    wire        iop_nmi_base;   // from attoio_ctrl (IOP_CTRL.nmi pulse)
+    wire        iop_nmi;        // iop_nmi_base | wdt_nmi
+    wire        wdt_nmi;
+    wire        wdt_host_alert;
+    wire        wdt_expired;
     wire        wake_latch;
 
     // Core memory interface
@@ -121,19 +125,23 @@ module attoio_macro (
     // Ctrl:  0x20..0x21 (doorbells)
     // SPI:   0x24..0x26
     // Timer: 0x28..0x2F
+    // WDT:   0x30..0x32 (WDT_COUNT, WDT_CTL, WDT_STATUS)
     wire mmio_is_gpio  = (mmio_woff <= 6'h1B);
     wire mmio_is_ctrl  = (mmio_woff >= 6'h20) && (mmio_woff <= 6'h21);
     wire mmio_is_spi   = (mmio_woff >= 6'h24) && (mmio_woff <= 6'h26);
     wire mmio_is_timer = (mmio_woff >= 6'h28) && (mmio_woff <= 6'h2F);
+    wire mmio_is_wdt   = (mmio_woff >= 6'h30) && (mmio_woff <= 6'h32);
 
     // ====================================================================
     // MMIO read-data mux
     // ====================================================================
     wire [31:0] timer_mmio_rdata;
+    wire [31:0] wdt_mmio_rdata;
     assign mmio_rdata = mmio_is_gpio  ? gpio_mmio_rdata :
                         mmio_is_ctrl  ? ctrl_iop_mmio_rdata :
                         mmio_is_spi   ? spi_mmio_rdata :
                         mmio_is_timer ? timer_mmio_rdata :
+                        mmio_is_wdt   ? wdt_mmio_rdata :
                         32'h0;
 
     // ====================================================================
@@ -331,10 +339,14 @@ module attoio_macro (
         .wake_latch     (wake_latch),
 
         .iop_reset      (iop_reset),
-        .iop_nmi        (iop_nmi),
+        .iop_nmi        (iop_nmi_base),
         .iop_irq        (iop_irq_base),
-        .irq_to_host    (irq_to_host)
+        .irq_to_host    (irq_to_host_ctrl)
     );
+
+    // irq_to_host = doorbell_c2h (from ctrl) | wdt_host_alert
+    wire irq_to_host_ctrl;
+    assign irq_to_host = irq_to_host_ctrl | wdt_host_alert;
 
     // ====================================================================
     // SPI shift helper
@@ -397,7 +409,25 @@ module attoio_macro (
         .timer_pad_val (timer_pad_val)
     );
 
-    // Combine timer IRQ into the core interrupt line
+    // Combine timer IRQ into the core interrupt line,
+    // and WDT expiry into the NMI line.
     assign iop_irq = iop_irq_base | timer_irq;
+    assign iop_nmi = iop_nmi_base | wdt_nmi;
+
+    // ====================================================================
+    // WDT — 16-bit watchdog
+    // Reset on rst_n OR iop_reset so each firmware boot starts disarmed.
+    // ====================================================================
+    attoio_wdt u_wdt (
+        .clk_iop        (clk_iop),
+        .rst_n          (rst_n & ~iop_reset),
+        .mmio_woff      (mmio_woff),
+        .mmio_wdata     (core_mem_wdata),
+        .mmio_wen       (mmio_wen & mmio_is_wdt),
+        .mmio_rdata     (wdt_mmio_rdata),
+        .wdt_nmi        (wdt_nmi),
+        .wdt_host_alert (wdt_host_alert),
+        .wdt_expired    (wdt_expired)
+    );
 
 endmodule

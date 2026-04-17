@@ -136,6 +136,25 @@ static inline void timer_cmp_pwm(unsigned i, uint32_t v, unsigned pad) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  WDT — 16-bit watchdog                                             */
+/*    Write WDT_COUNT to pet (also reloads). WDT_CTL[0]=enable,        */
+/*    [1]=host_alert_en. WDT_STATUS[0]=expired (sticky R/W1C).         */
+/* ------------------------------------------------------------------ */
+#define WDT_COUNT       (*(volatile uint32_t *)(ATTOIO_MMIO_BASE + 0xC0))
+#define WDT_CTL         (*(volatile uint32_t *)(ATTOIO_MMIO_BASE + 0xC4))
+#define WDT_STATUS      (*(volatile uint32_t *)(ATTOIO_MMIO_BASE + 0xC8))
+
+#define WDT_CTL_EN              (1u << 0)
+#define WDT_CTL_HOST_ALERT_EN   (1u << 1)
+#define WDT_STATUS_EXPIRED      (1u << 0)
+
+static inline void wdt_pet(uint32_t reload)   { WDT_COUNT = reload; }
+static inline void wdt_enable(int host_alert) {
+    WDT_CTL = WDT_CTL_EN | (host_alert ? WDT_CTL_HOST_ALERT_EN : 0);
+}
+static inline void wdt_disable(void)          { WDT_CTL = 0; }
+
+/* ------------------------------------------------------------------ */
 /*  Mailbox                                                           */
 /* ------------------------------------------------------------------ */
 #define MAILBOX         ((volatile uint8_t *) ATTOIO_MAILBOX_BASE)

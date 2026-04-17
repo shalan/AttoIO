@@ -20,6 +20,7 @@ iverilog -g2005-sv \
     rtl/attoio_ctrl.v \
     rtl/attoio_spi.v \
     rtl/attoio_timer.v \
+    rtl/attoio_wdt.v \
     rtl/attoio_macro.v \
     models/dffram_rtl.v \
     ../frv32/rtl/attorv32.v \
