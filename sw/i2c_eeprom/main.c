@@ -60,11 +60,14 @@ static void NI i2c_restart(void) {
 
 static void NI i2c_write(uint8_t b) {
     for (int i = 0; i < 8; i++) {
-        if (b & 0x80) SDA_REL(); else SDA_LOW();
+        /* Using explicit mask (1u<<7) avoids any oddity with signed
+         * arithmetic on uint8_t promotion. */
+        unsigned bit = (b >> 7) & 1u;
+        if (bit) SDA_REL(); else SDA_LOW();
         qtr();
         SCL_REL(); qtr(); qtr();
         SCL_LOW(); qtr();
-        b <<= 1;
+        b = (uint8_t)(b << 1);
     }
     SDA_REL(); qtr();
     SCL_REL(); qtr(); qtr();

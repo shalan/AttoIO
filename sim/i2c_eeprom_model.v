@@ -1,31 +1,17 @@
 /*
- * i2c_eeprom_model — a minimal 256-byte I2C EEPROM behavioral model
- * for AttoIO testbenches. AT24C02-compatible at the *protocol* level
- * (device-addr byte + 8-bit word address + data). No write timing
- * (tWR) and no SDA setup/hold checks — this is a functional model
- * only, meant for round-trip verification of the I²C master firmware.
+ * i2c_eeprom_model — minimal 256 B I²C EEPROM behavioral model for
+ * AttoIO testbenches. 24C02-compatible at the protocol level.
  *
- * If tighter timing checks are needed, drop a vendor model in
- * models/external/ and reference it from the testbench instead; see
- * models/external/README.md.
+ * Features:
+ *   - START / RESTART / STOP detection
+ *   - Device address byte (7'b1010_000 + R/W) + ACK
+ *   - Word-address byte + payload writes (sequential, auto-increment)
+ *   - Sequential reads from the current pointer
+ *   - Master ACK/NAK during reads
  *
- * Ports:
- *   sda  inout  I²C data line, open-drain (pulled high externally).
- *              The model drives a '0' by pulling sda low; to release,
- *              it tri-states sda to 'z'.
- *   scl  input  I²C clock from the master.
- *
- * Addressing (matches AT24C02 with A2:A1:A0 = 3'b000):
- *   device address byte = 7'b1010_000 + R/W bit
- *
- * Supported sequences:
- *   Write:
- *     START, 0xA0, (ack), word_addr, (ack), data0, (ack), ..., STOP
- *   Random read:
- *     START, 0xA0, (ack), word_addr, (ack), ReSTART, 0xA1, (ack),
- *       data0, (master-ack), data1, ..., (master-nak), STOP
- *   Current-address read:
- *     START, 0xA1, (ack), data, ..., (nak), STOP
+ * Robust against RESTART mid-transaction: every START event sets
+ * `start_pulse` and `disable`s the proto block, which is re-entered
+ * immediately — effectively aborting any in-flight read/write-byte.
  */
 
 `default_nettype none
@@ -41,60 +27,35 @@ module i2c_eeprom_model #(
     reg [7:0] mem [0:MEM_SIZE-1];
     reg [7:0] addr_ptr;
 
-    /* --- open-drain SDA driver --------------------------------------- */
-    reg sda_drive_low;   /* 1 = pull sda low, 0 = release (high-z) */
+    reg sda_drive_low;
     assign sda = sda_drive_low ? 1'b0 : 1'bz;
 
-    /* --- state & byte-assembly helpers ------------------------------- */
-    reg        in_xfer;      /* set between START and STOP */
-    reg        got_dev_byte; /* first byte since START was the dev-addr  */
-    reg        is_read;      /* current transaction direction */
-    reg        got_word_addr;
+    reg in_xfer;
+    reg start_pulse;   /* strobed on every START / RESTART */
 
-    /* --- initialisation --------------------------------------------- */
     integer ki;
     initial begin
         for (ki = 0; ki < MEM_SIZE; ki = ki + 1) mem[ki] = 8'h00;
         sda_drive_low = 1'b0;
         in_xfer       = 1'b0;
-        got_dev_byte  = 1'b0;
-        got_word_addr = 1'b0;
-        is_read       = 1'b0;
+        start_pulse   = 1'b0;
         addr_ptr      = 8'h00;
     end
 
-    /* --- START / STOP detection (change of SDA while SCL is high) ---- */
+    /* ---- START / RESTART detector ---- */
     always @(negedge sda) if (scl === 1'b1) begin
-        /* START condition */
         in_xfer       = 1'b1;
-        got_dev_byte  = 1'b0;
-        got_word_addr = 1'b0;
+        start_pulse   = 1'b1;
         sda_drive_low = 1'b0;
     end
 
+    /* ---- STOP detector ---- */
     always @(posedge sda) if (scl === 1'b1) begin
-        /* STOP condition */
         in_xfer       = 1'b0;
-        got_dev_byte  = 1'b0;
-        got_word_addr = 1'b0;
-        is_read       = 1'b0;
         sda_drive_low = 1'b0;
     end
 
-    /* --- bit shifters -------------------------------------------------
-     * One byte is 8 data bits followed by an ACK bit. We run a small
-     * task that shifts 8 bits on rising SCL, then drives/samples the
-     * ack on the 9th SCL pulse.
-     */
-    task do_ack_low;
-        begin
-            @(negedge scl);      /* pull SDA low before the ack SCL pulse */
-            sda_drive_low = 1'b1;
-            @(negedge scl);      /* release it on the next falling edge  */
-            sda_drive_low = 1'b0;
-        end
-    endtask
-
+    /* ---- Byte shifters ---- */
     task read_byte(output [7:0] b);
         integer i;
         begin
@@ -106,81 +67,93 @@ module i2c_eeprom_model #(
         end
     endtask
 
-    /* Send 8 bits MSB-first, then sample master ack on bit 9. Returns
-     * the master's ack bit (1 = NAK, 0 = ACK). */
+    task do_ack_low;
+        begin
+            @(negedge scl);
+            sda_drive_low = 1'b1;
+            @(negedge scl);
+            sda_drive_low = 1'b0;
+        end
+    endtask
+
+    /* Slave -> master byte. MSB driven immediately, subsequent bits
+     * updated after the master has sampled the previous bit (wait for
+     * posedge then negedge each iteration — makes the sync work for
+     * both the first byte after ACK and subsequent bytes, where there
+     * would otherwise be a stray ACK-phase negedge between bytes). */
     task send_byte(input [7:0] b, output ack_bit);
         integer i;
         reg [7:0] bb;
         begin
-            bb = b;
-            for (i = 0; i < 8; i = i + 1) begin
-                @(negedge scl);
-                sda_drive_low = ~bb[7];   /* MSB first */
-                bb = {bb[6:0], 1'b0};
+            bb            = b;
+            sda_drive_low = ~bb[7];
+            bb            = {bb[6:0], 1'b0};
+            for (i = 1; i < 8; i = i + 1) begin
+                @(posedge scl);        /* master samples bit (7-i+1) */
+                @(negedge scl);        /* end of that bit's SCL pulse */
+                sda_drive_low = ~bb[7];
+                bb            = {bb[6:0], 1'b0};
             end
-            @(negedge scl);
-            sda_drive_low = 1'b0;         /* release SDA for master ack */
-            @(posedge scl);
-            ack_bit = sda;                /* sample master's ack */
+            @(posedge scl);            /* master samples LSB */
+            @(negedge scl);            /* end of LSB pulse */
+            sda_drive_low = 1'b0;      /* release SDA for master ACK */
+            @(posedge scl);            /* ACK SCL high */
+            ack_bit = sda;             /* sample master's ack */
         end
     endtask
 
-    /* --- main protocol FSM -----------------------------------------
-     * We avoid @(posedge scl) races with the START/STOP detectors by
-     * running this as a separate `initial forever` process that waits
-     * for in_xfer to go high, then drives one transaction to STOP.
+    /* ---- Protocol watchdog: abort proto on RESTART ----
+     * start_pulse fires for every negedge SDA with SCL high. On
+     * RESTART (inside an xfer) we want the proto block to abandon
+     * whatever it was doing and re-enter from the top.
      */
+    always @(posedge start_pulse) begin
+        disable proto.proto_body;
+    end
+
+    /* ---- Main protocol ---- */
     initial begin : proto
         reg [7:0] b;
         reg       ack;
-        forever begin
+        reg       is_read;
+
+        forever begin : proto_body
+            start_pulse = 1'b0;
             wait (in_xfer === 1'b1);
 
-            /* ---- device-address byte ---- */
             read_byte(b);
-            if (b[7:1] === DEVICE_ADDR) begin
-                is_read      = b[0];
-                got_dev_byte = 1'b1;
-                do_ack_low();
-            end else begin
-                /* not for us — stay silent until STOP */
-                wait (in_xfer === 1'b0);
+            if (b[7:1] !== DEVICE_ADDR) begin
+                /* Not us — wait for STOP or another START. */
+                wait (in_xfer === 1'b0 || start_pulse === 1'b1);
+                disable proto_body;
             end
+            is_read = b[0];
+            do_ack_low();
 
-            if (in_xfer && !is_read) begin
-                /* ---- word-address byte + payload ---- */
+            if (!is_read) begin
+                /* Word-address byte. */
                 read_byte(b);
-                addr_ptr      = b;
-                got_word_addr = 1'b1;
+                addr_ptr = b;
                 do_ack_low();
 
-                while (in_xfer) begin : write_loop
+                /* Payload bytes until STOP or RESTART. */
+                while (in_xfer) begin
                     read_byte(b);
-                    if (!in_xfer) disable write_loop;
                     mem[addr_ptr] = b;
-                    addr_ptr      = (addr_ptr + 8'h01);
+                    addr_ptr      = addr_ptr + 8'h01;
                     do_ack_low();
                 end
-            end
-
-            if (in_xfer && is_read) begin
-                /* ---- sequential read from addr_ptr ---- */
-                while (in_xfer) begin : read_loop
+            end else begin
+                /* Read from current addr_ptr until master NAKs. */
+                while (in_xfer) begin
                     send_byte(mem[addr_ptr], ack);
-                    addr_ptr = (addr_ptr + 8'h01);
+                    addr_ptr = addr_ptr + 8'h01;
                     if (ack === 1'b1) begin
-                        /* master NAKed — wait for STOP */
-                        wait (in_xfer === 1'b0);
-                        disable read_loop;
+                        wait (in_xfer === 1'b0 || start_pulse === 1'b1);
+                        disable proto_body;
                     end
                 end
             end
-
-            /* On ReSTART (falling edge of SDA while SCL high re-enters
-             * in_xfer via the START detector), the while loop above
-             * will see in_xfer drop-then-rise and we'll come back to
-             * the top naturally on the next iteration. */
-            if (!in_xfer) ;
         end
     end
 
