@@ -1,8 +1,10 @@
 /******************************************************************************/
-// tb_uart — E1 / Phase 1a.  Runs the uart_tx firmware and decodes what it
-// sends on pad_out[0] with a UART model at 115200 baud.  Verifies the
-// decoded string matches "Hello, AttoIO\r\n" and the done-sentinel
-// arrives in mailbox[0].
+// tb_uart — E1 / Phase 1a, v2 with APB host.
+//
+// Runs the uart_tx firmware and decodes what it sends on pad_out[0]
+// with a UART RX model at 115200 baud. Verifies the decoded string
+// matches "Hello, AttoIO\r\n" and the done-sentinel arrives in
+// mailbox[0] (now @ APB 0x600 under the v2 memory map).
 /******************************************************************************/
 
 `timescale 1ns/1ps
@@ -17,7 +19,7 @@ module tb_uart;
     parameter CLK_DIV       = 4;    /* clk_iop = 25 MHz */
     parameter UART_BIT_NS   = 8681; /* 115200 baud */
 
-    /* Generate an oversample clock at 16 * 115200 Hz = 1.8432 MHz. */
+    /* Oversample clock at 16 × bit rate for the RX model */
     real   SAMPLE_HALF_NS = UART_BIT_NS / (2.0 * 16);
     reg    sample_clk     = 0;
     always #(SAMPLE_HALF_NS) sample_clk = ~sample_clk;
@@ -26,15 +28,17 @@ module tb_uart;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [9:0]  host_addr;
-    reg  [31:0] host_wdata;
-    reg  [3:0]  host_wmask;
-    reg         host_wen;
-    reg         host_ren;
-    wire [31:0] host_rdata;
-    wire        host_ready;
+    reg  [10:0] PADDR;
+    reg         PSEL;
+    reg         PENABLE;
+    reg         PWRITE;
+    reg  [31:0] PWDATA;
+    reg  [3:0]  PSTRB;
+    wire [31:0] PRDATA;
+    wire        PREADY;
+    wire        PSLVERR;
 
-    reg  [15:0] pad_in = 16'hFFFF;  /* idle-high RX line */
+    reg  [15:0] pad_in = 16'hFFFF;
     wire [15:0] pad_out;
     wire [15:0] pad_oe;
     wire [127:0] pad_ctl;
@@ -50,18 +54,16 @@ module tb_uart;
 
     attoio_macro u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
-        .host_addr(host_addr), .host_wdata(host_wdata), .host_wmask(host_wmask),
-        .host_wen(host_wen), .host_ren(host_ren),
-        .host_rdata(host_rdata), .host_ready(host_ready),
+        .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
+        .PWDATA(PWDATA), .PSTRB(PSTRB),
+        .PRDATA(PRDATA), .PREADY(PREADY), .PSLVERR(PSLVERR),
         .pad_in(pad_in), .pad_out(pad_out), .pad_oe(pad_oe), .pad_ctl(pad_ctl),
         .irq_to_host(irq_to_host)
     );
 
-    // ---- UART RX model tapping pad_out[0] ----
     wire [7:0] rx_byte;
     wire       rx_valid;
     wire       rx_err;
-
     uart_rx_model #(.SAMPLES_PER_BIT(16)) u_rx_model (
         .sample_clk(sample_clk),
         .rx_line(pad_out[0]),
@@ -70,29 +72,8 @@ module tb_uart;
         .frame_err(rx_err)
     );
 
-    // ---- Host bus tasks ----
-    task host_write(input [9:0] addr, input [31:0] data);
-        begin
-            @(posedge sysclk); #1;
-            host_addr = addr; host_wdata = data;
-            host_wmask = 4'hF; host_wen = 1'b1; host_ren = 1'b0;
-            @(posedge sysclk); #1;
-            host_wen = 1'b0; host_wmask = 4'h0;
-        end
-    endtask
+`include "apb_host.vh"
 
-    task host_read(input [9:0] addr, output [31:0] data);
-        begin
-            @(posedge sysclk); #1;
-            host_addr = addr; host_ren = 1'b1; host_wen = 1'b0;
-            @(posedge sysclk); #1;
-            host_ren = 1'b0;
-            @(posedge sysclk); #1;
-            data = host_rdata;
-        end
-    endtask
-
-    // ---- Capture received bytes into a buffer ----
     reg [7:0] rx_buf [0:63];
     integer   rx_count;
     initial   rx_count = 0;
@@ -108,21 +89,21 @@ module tb_uart;
         end
     end
 
-
-    // ---- Firmware loader ----
-    reg [31:0] fw_image [0:127];
+    reg [31:0] fw_image [0:383];
     integer i;
     reg [31:0] rd;
 
-    task wait_for_mailbox(input [9:0] addr, input [31:0] expected, input integer max_tries);
+    task wait_for_mailbox(input [10:0] addr, input [31:0] expected,
+                          input integer max_tries);
         integer tries;
         reg [31:0] val;
         begin
             tries = 0;
             while (tries < max_tries) begin
-                host_read(addr, val);
+                apb_read(addr, val);
                 if (val === expected) begin
-                    $display("  mailbox @0x%03h = %08h  (waited %0d reads)", addr, val, tries);
+                    $display("  mailbox @0x%03h = %08h  (waited %0d reads)",
+                             addr, val, tries);
                     disable wait_for_mailbox;
                 end
                 tries = tries + 1;
@@ -137,32 +118,27 @@ module tb_uart;
         $dumpfile("tb_uart.vcd");
         $dumpvars(0, tb_uart);
 
-        for (i = 0; i < 128; i = i + 1) fw_image[i] = 32'h00000013;
+        for (i = 0; i < 384; i = i + 1) fw_image[i] = 32'h00000013;
         $readmemh(`FW_HEX, fw_image);
 
-        host_addr = 0; host_wdata = 0; host_wmask = 0;
-        host_wen  = 0; host_ren  = 0;
+        PADDR = 0; PWDATA = 0; PSTRB = 0;
+        PSEL = 0; PENABLE = 0; PWRITE = 0;
         repeat (10) @(posedge sysclk);
         rst_n = 1;
         repeat (5) @(posedge sysclk);
 
         $display("--- tb_uart: loading firmware ---");
-        for (i = 0; i < 128; i = i + 1)
-            host_write(i * 4, fw_image[i]);
+        for (i = 0; i < 384; i = i + 1)
+            apb_write(i * 4, fw_image[i], 4'hF);
 
         $display("--- releasing IOP reset ---");
-        host_write(10'h308, 32'h0);
+        apb_write(11'h708, 32'h0, 4'hF);
 
-        /* Wait for sentinel with a generous budget — a 15-byte message
-         * at 115200 baud takes ~1.3 ms wall-clock. */
-        wait_for_mailbox(10'h200, 32'hD0D0D0D0, 200000);
+        wait_for_mailbox(11'h600, 32'hD0D0D0D0, 200000);
         $display("  firmware signalled 'TX complete'");
 
-        /* Verify received string. */
         begin : check_string
             integer j;
-            /* "Hello, AttoIO\r\n" as explicit byte array, avoids any
-             * string-type indexing quirks. */
             reg [7:0] expected [0:14];
             expected[0]  = "H"; expected[1]  = "e"; expected[2]  = "l";
             expected[3]  = "l"; expected[4]  = "o"; expected[5]  = ",";
@@ -187,7 +163,7 @@ module tb_uart;
     end
 
     initial begin
-        #50000000;   /* 50 ms timeout */
+        #50000000;
         $display("TIMEOUT");
         $fatal;
     end

@@ -26,6 +26,9 @@ module uart_rx_model #(
     reg [4:0]  sample_cnt;   /* 0..SAMPLES_PER_BIT-1 */
     reg [3:0]  bit_idx;      /* 0..8 */
     reg [7:0]  shreg;
+    reg [4:0]  idle_cnt;     /* counts consecutive high samples before
+                              * the model arms for a start bit */
+    reg        armed;
 
     initial begin
         state      = S_IDLE;
@@ -35,14 +38,32 @@ module uart_rx_model #(
         byte_out   = 0;
         byte_valid = 0;
         frame_err  = 0;
+        idle_cnt   = 0;
+        armed      = 1'b0;
     end
 
     always @(posedge sample_clk) begin
         byte_valid <= 1'b0;
+
+        /* The model only starts looking for frames after rx_line has
+         * been idle-high for at least one full bit-time (rejects the
+         * spurious all-zero pseudo-frames that appear before the DUT
+         * brings pad_out[0] high during boot). Once armed, stays
+         * armed — between bytes the natural stop bit re-aligns us. */
+        if (!armed) begin
+            if (rx_line === 1'b1) begin
+                if (idle_cnt < SAMPLES_PER_BIT)
+                    idle_cnt <= idle_cnt + 1;
+                else
+                    armed <= 1'b1;
+            end else begin
+                idle_cnt <= 0;
+            end
+        end
+
         case (state)
             S_IDLE: begin
-                /* Wait for a stable low (start bit detected). */
-                if (rx_line === 1'b0) begin
+                if (armed && rx_line === 1'b0) begin
                     state      <= S_START;
                     sample_cnt <= 0;
                 end

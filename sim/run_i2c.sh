@@ -3,18 +3,21 @@ set -e
 PROJ_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJ_ROOT"
 
-make -C sw FW=wake_test >/dev/null
-HEX="$PROJ_ROOT/build/sw/wake_test/wake_test.hex"
+FW="${FW:-i2c_eeprom}"
+TB="${TB:-i2c}"
+
+make -C sw FW="$FW" >/dev/null
+HEX="$PROJ_ROOT/build/sw/$FW/$FW.hex"
 [[ -f "$HEX" ]] || { echo "ERROR: hex not found: $HEX"; exit 1; }
 
 mkdir -p build/sim
-iverilog -g2005-sv -I sim \
+iverilog -g2012 -I sim \
     -DBENCH \
     -DNRV_SINGLE_PORT_REGF \
     -DNRV_SHARED_ADDER \
     -DNRV_SERIAL_SHIFT \
     -DFW_HEX=\"$HEX\" \
-    -o build/sim/tb_wake.vvp \
+    -o build/sim/tb_$TB.vvp \
     rtl/attoio_memmux.v \
     rtl/attoio_gpio.v \
     rtl/attoio_ctrl.v \
@@ -25,6 +28,7 @@ iverilog -g2005-sv -I sim \
     rtl/attoio_macro.v \
     models/dffram_rtl.v \
     ../frv32/rtl/attorv32.v \
-    sim/tb_wake.v
+    sim/i2c_eeprom_model.v \
+    sim/tb_$TB.v
 
-cd build/sim && vvp tb_wake.vvp
+cd build/sim && vvp tb_$TB.vvp

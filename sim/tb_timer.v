@@ -24,13 +24,15 @@ module tb_timer;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [9:0]  host_addr;
-    reg  [31:0] host_wdata;
-    reg  [3:0]  host_wmask;
-    reg         host_wen;
-    reg         host_ren;
-    wire [31:0] host_rdata;
-    wire        host_ready;
+    reg  [10:0] PADDR;
+    reg         PSEL;
+    reg         PENABLE;
+    reg         PWRITE;
+    reg  [31:0] PWDATA;
+    reg  [3:0]  PSTRB;
+    wire [31:0] PRDATA;
+    wire        PREADY;
+    wire        PSLVERR;
 
     reg  [15:0] pad_in = 0;
     wire [15:0] pad_out;
@@ -48,35 +50,15 @@ module tb_timer;
 
     attoio_macro u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
-        .host_addr(host_addr), .host_wdata(host_wdata), .host_wmask(host_wmask),
-        .host_wen(host_wen), .host_ren(host_ren),
-        .host_rdata(host_rdata), .host_ready(host_ready),
+        .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
+        .PWDATA(PWDATA), .PSTRB(PSTRB),
+        .PRDATA(PRDATA), .PREADY(PREADY), .PSLVERR(PSLVERR),
         .pad_in(pad_in), .pad_out(pad_out), .pad_oe(pad_oe), .pad_ctl(pad_ctl),
         .irq_to_host(irq_to_host)
     );
 
     // Bus tasks (same pattern as other TBs)
-    task host_write(input [9:0] addr, input [31:0] data);
-        begin
-            @(posedge sysclk); #1;
-            host_addr = addr; host_wdata = data;
-            host_wmask = 4'hF; host_wen = 1'b1; host_ren = 1'b0;
-            @(posedge sysclk); #1;
-            host_wen = 1'b0; host_wmask = 4'h0;
-        end
-    endtask
-
-    task host_read(input [9:0] addr, output [31:0] data);
-        begin
-            @(posedge sysclk); #1;
-            host_addr = addr; host_ren = 1'b1; host_wen = 1'b0;
-            @(posedge sysclk); #1;
-            host_ren = 1'b0;
-            @(posedge sysclk); #1;
-            data = host_rdata;
-        end
-    endtask
-
+`include "apb_host.vh"
     // --------------------------------------------------------------
     // Measurement: watch pad_out[3] and log half-period lengths
     // --------------------------------------------------------------
@@ -121,7 +103,7 @@ module tb_timer;
     // --------------------------------------------------------------
     // Firmware loader + runner
     // --------------------------------------------------------------
-    reg [31:0] fw_image [0:127];
+    reg [31:0] fw_image [0:383];
     integer i;
     reg [31:0] rd;
 
@@ -129,27 +111,27 @@ module tb_timer;
         $dumpfile("tb_timer.vcd");
         $dumpvars(0, tb_timer);
 
-        for (i = 0; i < 128; i = i + 1) fw_image[i] = 32'h00000013;
+        for (i = 0; i < 384; i = i + 1) fw_image[i] = 32'h00000013;
         $readmemh(`FW_HEX, fw_image);
 
-        host_addr = 0; host_wdata = 0; host_wmask = 0;
-        host_wen  = 0; host_ren  = 0;
+        PADDR = 0; PWDATA = 0; PSTRB = 0;
+        PSEL = 0; PENABLE = 0; PWRITE = 0;
         repeat (10) @(posedge sysclk);
         rst_n = 1;
         repeat (5) @(posedge sysclk);
 
         $display("--- tb_timer: loading firmware ---");
-        for (i = 0; i < 128; i = i + 1)
-            host_write(i * 4, fw_image[i]);
+        for (i = 0; i < 384; i = i + 1)
+            apb_write(i * 4, fw_image[i], 4'hF);
 
         $display("--- releasing IOP reset ---");
-        host_write(10'h308, 32'h0);
+        apb_write(11'h708, 32'h0, 4'hF);
 
         // Wait for the firmware to run enough edges.
         repeat (800) @(posedge clk_iop);
 
         // Verify sentinel
-        host_read(10'h200, rd);
+        apb_read(11'h600, rd);
         if (rd !== 32'hCAFEBABE) begin
             $display("FAIL: mailbox[0] = %08h, expected CAFEBABE", rd);
             $fatal;

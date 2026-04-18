@@ -1,16 +1,17 @@
 /******************************************************************************/
 // attoio_ctrl — Doorbells, IOP_CTRL, IRQ routing
 //
-// Host-side registers (offsets from AttoIO base + 0x300):
-//   0x300  DOORBELL_H2C   W1S (host), R/W1C (IOP)   — host -> IOP doorbell
-//   0x304  DOORBELL_C2H   R/W1C (host), RW (IOP)    — IOP -> host doorbell
-//   0x308  IOP_CTRL       RW (host only)
+// Host-side registers (byte offsets within the MMIO page, which lives
+// at APB base 0x700 under the v2 memory map):
+//   +0x00  DOORBELL_H2C   W1S (host), R/W1C (IOP)   — host -> IOP doorbell
+//   +0x04  DOORBELL_C2H   R/W1C (host), RW (IOP)    — IOP -> host doorbell
+//   +0x08  IOP_CTRL       RW (host only)
 //          bit 0: reset  (1 = IOP held in reset)
 //          bit 1: nmi    (write 1 = pulse, self-clearing)
 //
-// IOP-side registers (within MMIO page):
-//   0x380  DOORBELL_H2C   R/W1C  (word offset 0x20 in MMIO page)
-//   0x384  DOORBELL_C2H   RW     (word offset 0x21 in MMIO page)
+// IOP-side registers (within MMIO page, word-offset decode):
+//   word 0x20  DOORBELL_H2C   R/W1C
+//   word 0x21  DOORBELL_C2H   RW
 //
 // All flops on sysclk. IOP reads/writes arrive on clk_iop edges which
 // are a subset of sysclk edges — inherently safe, no synchronizer needed.

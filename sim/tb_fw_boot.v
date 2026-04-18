@@ -1,18 +1,11 @@
 /******************************************************************************/
-// tb_fw_boot — Phase-0 acceptance test.
+// tb_fw_boot — Phase-0 acceptance test (v2: APB host, 11-bit address).
 //
-// Loads a compiled firmware image (hex format, one 32-bit word per line)
-// into SRAM A via the host bus while IOP is held in reset, then releases
-// reset and watches the core execute. The test passes when:
-//   (1) the firmware is written correctly to SRAM A (readback),
-//   (2) the core's PC progresses past the reset trampoline (> 0x004),
-//   (3) the core reaches a steady state where PC is stable for at least
-//       20 clk_iop cycles AND mem_rstrb=0 (i.e., at WFI or in a tight
-//       loop with no fetch). AttoRV32 holds WFI in S_EXECUTE with
-//       wfi_stall asserted — PC never advances, which is the signal.
-//
-// The hex file path can be overridden with -DFW_HEX=\"...\" on iverilog's
-// command line; default is build/sw/empty/empty.hex.
+// Loads a compiled firmware image into SRAM A via the host APB while
+// the IOP is held in reset, releases reset, then watches the core PC.
+// PASS = PC stable for 20 consecutive clk_iop cycles past the reset
+// trampoline (PC > 0x004) — i.e. the core has reached steady idle
+// (e.g. wfi loop in main).
 /******************************************************************************/
 
 `timescale 1ns/1ps
@@ -30,13 +23,15 @@ module tb_fw_boot;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [9:0]  host_addr;
-    reg  [31:0] host_wdata;
-    reg  [3:0]  host_wmask;
-    reg         host_wen;
-    reg         host_ren;
-    wire [31:0] host_rdata;
-    wire        host_ready;
+    reg  [10:0] PADDR;
+    reg         PSEL;
+    reg         PENABLE;
+    reg         PWRITE;
+    reg  [31:0] PWDATA;
+    reg  [3:0]  PSTRB;
+    wire [31:0] PRDATA;
+    wire        PREADY;
+    wire        PSLVERR;
 
     reg  [15:0] pad_in = 0;
     wire [15:0] pad_out;
@@ -55,72 +50,39 @@ module tb_fw_boot;
 
     attoio_macro u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
-        .host_addr(host_addr), .host_wdata(host_wdata), .host_wmask(host_wmask),
-        .host_wen(host_wen), .host_ren(host_ren),
-        .host_rdata(host_rdata), .host_ready(host_ready),
+        .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
+        .PWDATA(PWDATA), .PSTRB(PSTRB),
+        .PRDATA(PRDATA), .PREADY(PREADY), .PSLVERR(PSLVERR),
         .pad_in(pad_in), .pad_out(pad_out), .pad_oe(pad_oe), .pad_ctl(pad_ctl),
         .irq_to_host(irq_to_host)
     );
 
-    // --------------------------------------------------------------
-    // Bus tasks
-    // --------------------------------------------------------------
-    task host_write(input [9:0] addr, input [31:0] data);
-        begin
-            @(posedge sysclk); #1;
-            host_addr = addr; host_wdata = data;
-            host_wmask = 4'hF; host_wen = 1'b1; host_ren = 1'b0;
-            @(posedge sysclk); #1;
-            host_wen = 1'b0; host_wmask = 4'h0;
-        end
-    endtask
+`include "apb_host.vh"
 
-    task host_read(input [9:0] addr, output [31:0] data);
-        begin
-            @(posedge sysclk); #1;
-            host_addr = addr; host_ren = 1'b1; host_wen = 1'b0;
-            @(posedge sysclk); #1;
-            host_ren = 1'b0;
-            @(posedge sysclk); #1;
-            data = host_rdata;
-        end
-    endtask
-
-    // --------------------------------------------------------------
-    // Hex image load
-    // --------------------------------------------------------------
-    reg [31:0] fw_image [0:127];      // 512 B / 4 B-per-word
+    reg [31:0] fw_image [0:383];      // 1536 B / 4 = 384 words
     integer    i;
     reg [31:0] rd;
-    integer    fw_words;
 
     initial begin
         $dumpfile("tb_fw_boot.vcd");
         $dumpvars(0, tb_fw_boot);
 
-        for (i = 0; i < 128; i = i + 1) fw_image[i] = 32'h00000013; // nop
+        for (i = 0; i < 384; i = i + 1) fw_image[i] = 32'h00000013;
         $readmemh(`FW_HEX, fw_image);
 
-        // Count significant words (first trailing all-zero run past word 4
-        // still counts; use a simple heuristic of "stop at 128" for now).
-        fw_words = 128;
-        $display("--- tb_fw_boot: loading %0d words from %s ---", fw_words, `FW_HEX);
+        $display("--- tb_fw_boot: loading firmware from %s ---", `FW_HEX);
 
-        // Reset release timing
-        host_addr = 0; host_wdata = 0; host_wmask = 0;
-        host_wen = 0; host_ren = 0;
+        PADDR = 0; PWDATA = 0; PSTRB = 0;
+        PSEL = 0; PENABLE = 0; PWRITE = 0;
         repeat (10) @(posedge sysclk);
         rst_n = 1;
         repeat (5) @(posedge sysclk);
 
-        // IOP starts in reset (IOP_CTRL.reset defaults to 1).
-        // Load firmware via host bus.
-        for (i = 0; i < fw_words; i = i + 1)
-            host_write(i * 4, fw_image[i]);
+        for (i = 0; i < 384; i = i + 1)
+            apb_write(i * 4, fw_image[i], 4'hF);
 
-        // Verify the first few words read back.
         for (i = 0; i < 8; i = i + 1) begin
-            host_read(i * 4, rd);
+            apb_read(i * 4, rd);
             if (rd !== fw_image[i]) begin
                 $display("FAIL: readback[%0d] = %08h, expected %08h",
                          i, rd, fw_image[i]);
@@ -129,24 +91,21 @@ module tb_fw_boot;
         end
         $display("  firmware readback OK");
 
-        // Release IOP from reset: IOP_CTRL @ byte 0x308, bit 0 = 0.
-        host_write(10'h308, 32'h0);
+        apb_write(11'h708, 32'h0, 4'hF);    // release IOP reset
         $display("  IOP reset released");
 
-        // Wait up to 2000 clk_iop cycles for the core to reach main loop.
-        // "Reached main" = PC stable for 20+ cycles past the trampoline.
         fork
             begin : pc_watch
-                reg [9:0] last_pc;
-                integer stable;
-                integer deadline;
+                reg [10:0] last_pc;
+                integer    stable;
+                integer    deadline;
                 stable   = 0;
                 deadline = 0;
-                last_pc  = 10'h3FF;
-                while (deadline < 2000) begin
+                last_pc  = 11'h7FF;
+                while (deadline < 4000) begin
                     @(posedge clk_iop);
                     deadline = deadline + 1;
-                    if (u_dut.core_pc_out > 10'h004 &&
+                    if (u_dut.core_pc_out > 11'h004 &&
                         u_dut.core_mem_rstrb == 1'b0) begin
                         if (u_dut.core_pc_out === last_pc)
                             stable = stable + 1;
@@ -155,7 +114,9 @@ module tb_fw_boot;
                         last_pc = u_dut.core_pc_out;
                         if (stable >= 20) begin
                             $display("PASS: core steady at PC=%03h (state=%0d) after %0d cycles",
-                                     u_dut.core_pc_out, u_dut.u_core.state, deadline);
+                                     u_dut.core_pc_out,
+                                     u_dut.u_core.state,
+                                     deadline);
                             $finish;
                         end
                     end
@@ -168,7 +129,7 @@ module tb_fw_boot;
     end
 
     initial begin
-        #2000000;
+        #10000000;
         $display("TIMEOUT");
         $fatal;
     end

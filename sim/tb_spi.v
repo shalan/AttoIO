@@ -23,13 +23,15 @@ module tb_spi;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [9:0]  host_addr;
-    reg  [31:0] host_wdata;
-    reg  [3:0]  host_wmask;
-    reg         host_wen;
-    reg         host_ren;
-    wire [31:0] host_rdata;
-    wire        host_ready;
+    reg  [10:0] PADDR;
+    reg         PSEL;
+    reg         PENABLE;
+    reg         PWRITE;
+    reg  [31:0] PWDATA;
+    reg  [3:0]  PSTRB;
+    wire [31:0] PRDATA;
+    wire        PREADY;
+    wire        PSLVERR;
 
     wire [15:0] pad_out;
     wire [15:0] pad_oe;
@@ -53,9 +55,9 @@ module tb_spi;
 
     attoio_macro u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
-        .host_addr(host_addr), .host_wdata(host_wdata), .host_wmask(host_wmask),
-        .host_wen(host_wen), .host_ren(host_ren),
-        .host_rdata(host_rdata), .host_ready(host_ready),
+        .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
+        .PWDATA(PWDATA), .PSTRB(PSTRB),
+        .PRDATA(PRDATA), .PREADY(PREADY), .PSLVERR(PSLVERR),
         .pad_in(pad_in), .pad_out(pad_out), .pad_oe(pad_oe), .pad_ctl(pad_ctl),
         .irq_to_host(irq_to_host)
     );
@@ -69,34 +71,14 @@ module tb_spi;
     );
 
     /* ---- Host bus tasks ---- */
-    task host_write(input [9:0] addr, input [31:0] data);
-        begin
-            @(posedge sysclk); #1;
-            host_addr = addr; host_wdata = data;
-            host_wmask = 4'hF; host_wen = 1'b1; host_ren = 1'b0;
-            @(posedge sysclk); #1;
-            host_wen = 1'b0; host_wmask = 4'h0;
-        end
-    endtask
-
-    task host_read(input [9:0] addr, output [31:0] data);
-        begin
-            @(posedge sysclk); #1;
-            host_addr = addr; host_ren = 1'b1; host_wen = 1'b0;
-            @(posedge sysclk); #1;
-            host_ren = 1'b0;
-            @(posedge sysclk); #1;
-            data = host_rdata;
-        end
-    endtask
-
-    task wait_for_mailbox(input [9:0] addr, input [31:0] expected, input integer max_tries);
+`include "apb_host.vh"
+    task wait_for_mailbox(input [10:0] addr, input [31:0] expected, input integer max_tries);
         integer tries;
         reg [31:0] val;
         begin
             tries = 0;
             while (tries < max_tries) begin
-                host_read(addr, val);
+                apb_read(addr, val);
                 if (val === expected) begin
                     $display("  mailbox @0x%03h = %08h  (waited %0d reads)", addr, val, tries);
                     disable wait_for_mailbox;
@@ -108,7 +90,7 @@ module tb_spi;
         end
     endtask
 
-    reg [31:0] fw_image [0:127];
+    reg [31:0] fw_image [0:383];
     integer i;
     reg [31:0] rd;
     reg [7:0]  expected_tx [0:3];
@@ -118,26 +100,26 @@ module tb_spi;
         $dumpfile("tb_spi.vcd");
         $dumpvars(0, tb_spi);
 
-        for (i = 0; i < 128; i = i + 1) fw_image[i] = 32'h00000013;
+        for (i = 0; i < 384; i = i + 1) fw_image[i] = 32'h00000013;
         $readmemh(`FW_HEX, fw_image);
 
-        host_addr = 0; host_wdata = 0; host_wmask = 0;
-        host_wen  = 0; host_ren  = 0;
+        PADDR = 0; PWDATA = 0; PSTRB = 0;
+        PSEL = 0; PENABLE = 0; PWRITE = 0;
         repeat (10) @(posedge sysclk);
         rst_n = 1;
         repeat (5) @(posedge sysclk);
 
         $display("--- tb_spi: loading firmware ---");
-        for (i = 0; i < 128; i = i + 1)
-            host_write(i * 4, fw_image[i]);
+        for (i = 0; i < 384; i = i + 1)
+            apb_write(i * 4, fw_image[i], 4'hF);
 
         $display("--- releasing IOP reset ---");
-        host_write(10'h308, 32'h0);
+        apb_write(11'h708, 32'h0, 4'hF);
 
         /* Wait for the "done" sentinel. 4 bytes * 16 clk_iop = 64 cycles
          * of shifting + some overhead; a few thousand host polls is
          * plenty of budget. */
-        wait_for_mailbox(10'h200, 32'hA5A55A5A, 20000);
+        wait_for_mailbox(11'h600, 32'hA5A55A5A, 20000);
         $display("  firmware signalled 'SPI done'");
 
         /* Check what the firmware transmitted (mailbox[12..15], packed
@@ -146,7 +128,7 @@ module tb_spi;
         expected_tx[0] = 8'hDE; expected_tx[1] = 8'hAD;
         expected_tx[2] = 8'hBE; expected_tx[3] = 8'hEF;
 
-        host_read(10'h20C, rd);
+        apb_read(11'h60C, rd);
         for (i = 0; i < 4; i = i + 1) begin
             reg [7:0] got_tx;
             got_tx = rd[i*8 +: 8];
@@ -166,7 +148,7 @@ module tb_spi;
         /* Check the master RX (mailbox[8..11], packed @ 0x208). */
         expected_rx[0] = 8'h11; expected_rx[1] = 8'h22;
         expected_rx[2] = 8'h33; expected_rx[3] = 8'h44;
-        host_read(10'h208, rd);
+        apb_read(11'h608, rd);
         for (i = 0; i < 4; i = i + 1) begin
             reg [7:0] got_rx;
             got_rx = rd[i*8 +: 8];

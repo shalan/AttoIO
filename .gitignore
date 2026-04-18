@@ -9,6 +9,10 @@ build/
 *.out
 *.tmp
 
+# ---- Vendor / proprietary models (user-dropped, not redistributed) -----
+models/external/*
+!models/external/README.md
+
 # ---- Editor / OS cruft ---------------------------------------------------
 .DS_Store
 Thumbs.db

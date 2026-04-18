@@ -30,13 +30,15 @@ module tb_wake;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [9:0]  host_addr;
-    reg  [31:0] host_wdata;
-    reg  [3:0]  host_wmask;
-    reg         host_wen;
-    reg         host_ren;
-    wire [31:0] host_rdata;
-    wire        host_ready;
+    reg  [10:0] PADDR;
+    reg         PSEL;
+    reg         PENABLE;
+    reg         PWRITE;
+    reg  [31:0] PWDATA;
+    reg  [3:0]  PSTRB;
+    wire [31:0] PRDATA;
+    wire        PREADY;
+    wire        PSLVERR;
 
     reg  [15:0] pad_in = 0;
     wire [15:0] pad_out;
@@ -54,41 +56,21 @@ module tb_wake;
 
     attoio_macro u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
-        .host_addr(host_addr), .host_wdata(host_wdata), .host_wmask(host_wmask),
-        .host_wen(host_wen), .host_ren(host_ren),
-        .host_rdata(host_rdata), .host_ready(host_ready),
+        .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
+        .PWDATA(PWDATA), .PSTRB(PSTRB),
+        .PRDATA(PRDATA), .PREADY(PREADY), .PSLVERR(PSLVERR),
         .pad_in(pad_in), .pad_out(pad_out), .pad_oe(pad_oe), .pad_ctl(pad_ctl),
         .irq_to_host(irq_to_host)
     );
 
-    task host_write(input [9:0] addr, input [31:0] data);
-        begin
-            @(posedge sysclk); #1;
-            host_addr = addr; host_wdata = data;
-            host_wmask = 4'hF; host_wen = 1'b1; host_ren = 1'b0;
-            @(posedge sysclk); #1;
-            host_wen = 1'b0; host_wmask = 4'h0;
-        end
-    endtask
-
-    task host_read(input [9:0] addr, output [31:0] data);
-        begin
-            @(posedge sysclk); #1;
-            host_addr = addr; host_ren = 1'b1; host_wen = 1'b0;
-            @(posedge sysclk); #1;
-            host_ren = 1'b0;
-            @(posedge sysclk); #1;
-            data = host_rdata;
-        end
-    endtask
-
-    task wait_for_mailbox(input [9:0] addr, input [31:0] expected);
+`include "apb_host.vh"
+    task wait_for_mailbox(input [10:0] addr, input [31:0] expected);
         integer tries;
         reg [31:0] val;
         begin
             tries = 0;
             while (tries < 5000) begin
-                host_read(addr, val);
+                apb_read(addr, val);
                 if (val === expected) begin
                     $display("  mailbox @0x%03h = %08h  (waited %0d reads)", addr, val, tries);
                     disable wait_for_mailbox;
@@ -101,7 +83,7 @@ module tb_wake;
         end
     endtask
 
-    reg [31:0] fw_image [0:127];
+    reg [31:0] fw_image [0:383];
     integer i;
     reg [31:0] rd;
 
@@ -111,34 +93,34 @@ module tb_wake;
         $dumpfile("tb_wake.vcd");
         $dumpvars(0, tb_wake);
 
-        for (i = 0; i < 128; i = i + 1) fw_image[i] = 32'h00000013;
+        for (i = 0; i < 384; i = i + 1) fw_image[i] = 32'h00000013;
         $readmemh(`FW_HEX, fw_image);
 
-        host_addr = 0; host_wdata = 0; host_wmask = 0;
-        host_wen  = 0; host_ren  = 0;
+        PADDR = 0; PWDATA = 0; PSTRB = 0;
+        PSEL = 0; PENABLE = 0; PWRITE = 0;
         repeat (10) @(posedge sysclk);
         rst_n = 1;
         repeat (5) @(posedge sysclk);
 
         $display("--- tb_wake: loading firmware ---");
-        for (i = 0; i < 128; i = i + 1)
-            host_write(i * 4, fw_image[i]);
+        for (i = 0; i < 384; i = i + 1)
+            apb_write(i * 4, fw_image[i], 4'hF);
 
         $display("--- releasing IOP reset ---");
-        host_write(10'h308, 32'h0);
+        apb_write(11'h708, 32'h0, 4'hF);
 
         // Wait for firmware to reach WFI (sentinel = 0xC0DEC0DE @ mailbox word 2)
-        wait_for_mailbox(10'h208, 32'hC0DEC0DE);
+        wait_for_mailbox(11'h608, 32'hC0DEC0DE);
         $display("  firmware configured wake, now idle in WFI");
 
         // ---- Test A: rising edge on pad[5] ----
         $display("--- Test A: pad[5] rising edge ---");
-        host_read(10'h200, rd); prev_count = rd;
+        apb_read(11'h600, rd); prev_count = rd;
         @(posedge sysclk); pad_in = 16'h0020; // bit 5 = 1
         repeat (1500) @(posedge sysclk);
-        host_read(10'h200, rd);
+        apb_read(11'h600, rd);
         if (rd === prev_count) begin $display("FAIL: count unchanged after rise on pad[5] (count=%0d)", rd); $fatal; end
-        host_read(10'h210, rd);
+        apb_read(11'h610, rd);
         if ((rd & 32'h20) != 32'h20) begin
             $display("FAIL: expected bit 5 in WAKE_FLAGS snapshot, got %08h", rd);
             $fatal;
@@ -147,19 +129,19 @@ module tb_wake;
 
         // ---- Test B: falling edge on pad[9] ----
         $display("--- Test B: pad[9] falling edge ---");
-        host_read(10'h200, rd); prev_count = rd;
+        apb_read(11'h600, rd); prev_count = rd;
         @(posedge sysclk); pad_in = 16'h0220; // bit 5 still high, bit 9 = 1
         repeat (1500) @(posedge sysclk);        // let pad[9] rise settle (no wake because falling only)
-        host_read(10'h200, rd);
+        apb_read(11'h600, rd);
         if (rd !== prev_count) begin
             $display("FAIL: wake count bumped on pad[9] rise (falling-only should ignore)");
             $fatal;
         end
         @(posedge sysclk); pad_in = 16'h0020; // bit 9 = 0 (falling)
         repeat (1500) @(posedge sysclk);
-        host_read(10'h200, rd);
+        apb_read(11'h600, rd);
         if (rd === prev_count) begin $display("FAIL: count unchanged after fall on pad[9]"); $fatal; end
-        host_read(10'h210, rd);
+        apb_read(11'h610, rd);
         if ((rd & 32'h200) != 32'h200) begin
             $display("FAIL: expected bit 9 in WAKE_FLAGS snapshot, got %08h", rd);
             $fatal;
@@ -168,12 +150,12 @@ module tb_wake;
 
         // ---- Test C: edge on pad[0] (not masked) ----
         $display("--- Test C: pad[0] edges ignored (mask=0) ---");
-        host_read(10'h200, rd); prev_count = rd;
+        apb_read(11'h600, rd); prev_count = rd;
         @(posedge sysclk); pad_in = 16'h0021; // add bit 0
         repeat (1500) @(posedge sysclk);
         @(posedge sysclk); pad_in = 16'h0020; // drop bit 0
         repeat (1500) @(posedge sysclk);
-        host_read(10'h200, rd);
+        apb_read(11'h600, rd);
         if (rd !== prev_count) begin
             $display("FAIL: wake count bumped on pad[0] edges (mask=0 should ignore); count=%0d prev=%0d", rd, prev_count);
             $fatal;

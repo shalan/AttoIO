@@ -8,7 +8,7 @@ HEX="$PROJ_ROOT/build/sw/wdt_test/wdt_test.hex"
 [[ -f "$HEX" ]] || { echo "ERROR: hex not found: $HEX"; exit 1; }
 
 mkdir -p build/sim
-iverilog -g2005-sv \
+iverilog -g2005-sv -I sim \
     -DBENCH \
     -DNRV_SINGLE_PORT_REGF \
     -DNRV_SHARED_ADDER \
@@ -21,6 +21,7 @@ iverilog -g2005-sv \
     rtl/attoio_spi.v \
     rtl/attoio_timer.v \
     rtl/attoio_wdt.v \
+    rtl/attoio_apb_if.v \
     rtl/attoio_macro.v \
     models/dffram_rtl.v \
     ../frv32/rtl/attorv32.v \

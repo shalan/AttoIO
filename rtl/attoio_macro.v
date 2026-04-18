@@ -1,17 +1,22 @@
 /******************************************************************************/
-// attoio_macro — AttoIO single hard macro
+// attoio_macro — AttoIO single hard macro (v2)
 //
-// Contains:
-//   - AttoRV32 core (RV32EC, minimal config)
-//   - SRAM A  (128x32 DFFRAM, 512 B, IOP-private)
-//   - SRAM B0 (32x32 DFFRAM, 128 B, mailbox low)
-//   - SRAM B1 (32x32 DFFRAM, 128 B, mailbox high)
+// Contents:
+//   - AttoRV32 core (RV32EC, ADDR_WIDTH=11)
+//   - 3 × SRAM A (RAM128 DFFRAM)          → 1536 B of private SRAM
+//   - 2 × SRAM B (RAM32 DFFRAM)           →  256 B of host/IOP mailbox
+//   - APB4 slave interface on the host side
 //   - Memory mux + address decoder + SRAM B arbiter
-//   - GPIO + PADCTL + input synchronizers + WAKE_LATCH
-//   - SPI shift helper
-//   - Doorbells + IOP_CTRL
+//   - GPIO + PADCTL + WAKE (per-pin) + SPI shift helper + TIMER + WDT
+//   - Doorbells + IOP_CTRL + IRQ routing
 //
-// External interface: see spec.md §3.2
+// Memory map (from both IOP and APB views; ADDR_WIDTH = 11):
+//   0x000 – 0x1FF  SRAM A0 (RAM128)
+//   0x200 – 0x3FF  SRAM A1 (RAM128)
+//   0x400 – 0x5FF  SRAM A2 (RAM128)
+//   0x600 – 0x67F  SRAM B0 mailbox
+//   0x680 – 0x6FF  SRAM B1 mailbox
+//   0x700 – 0x7FF  MMIO page
 /******************************************************************************/
 
 module attoio_macro (
@@ -20,16 +25,19 @@ module attoio_macro (
     input  wire         clk_iop,
 
     // ---- Reset ----
-    input  wire         rst_n,          // active-low, synchronous to sysclk
+    input  wire         rst_n,
 
-    // ---- Host bus (generic register slave, sysclk domain) ----
-    input  wire [9:0]   host_addr,
-    input  wire [31:0]  host_wdata,
-    input  wire [3:0]   host_wmask,
-    input  wire         host_wen,
-    input  wire         host_ren,
-    output wire [31:0]  host_rdata,
-    output wire         host_ready,
+    // ---- APB4 slave (host / system bus, sysclk domain) ----
+    //      PCLK tied to sysclk internally (simpler for v2).
+    input  wire [10:0]  PADDR,
+    input  wire         PSEL,
+    input  wire         PENABLE,
+    input  wire         PWRITE,
+    input  wire [31:0]  PWDATA,
+    input  wire [3:0]   PSTRB,
+    output wire [31:0]  PRDATA,
+    output wire         PREADY,
+    output wire         PSLVERR,
 
     // ---- Pad interface ----
     input  wire [15:0]  pad_in,
@@ -42,21 +50,51 @@ module attoio_macro (
 );
 
     // ====================================================================
+    // Internal "host bus" driven by the APB wrapper
+    // ====================================================================
+    wire [10:0] host_addr;
+    wire [31:0] host_wdata;
+    wire [3:0]  host_wmask;
+    wire        host_wen;
+    wire        host_ren;
+    wire [31:0] host_rdata;
+    wire        host_ready;
+
+    attoio_apb_if u_apb (
+        .PCLK        (sysclk),
+        .PRESETn     (rst_n),
+        .PADDR       (PADDR),
+        .PSEL        (PSEL),
+        .PENABLE     (PENABLE),
+        .PWRITE      (PWRITE),
+        .PWDATA      (PWDATA),
+        .PSTRB       (PSTRB),
+        .PRDATA      (PRDATA),
+        .PREADY      (PREADY),
+        .PSLVERR     (PSLVERR),
+
+        .host_addr   (host_addr),
+        .host_wdata  (host_wdata),
+        .host_wmask  (host_wmask),
+        .host_wen    (host_wen),
+        .host_ren    (host_ren),
+        .host_rdata  (host_rdata),
+        .host_ready  (host_ready)
+    );
+
+    // ====================================================================
     // Internal wires
     // ====================================================================
-
-    // IOP control signals
     wire        iop_reset;
-    wire        iop_irq_base;   // from attoio_ctrl (doorbell + wake)
-    wire        iop_irq;        // iop_irq_base | timer_irq
-    wire        iop_nmi_base;   // from attoio_ctrl (IOP_CTRL.nmi pulse)
-    wire        iop_nmi;        // iop_nmi_base | wdt_nmi
+    wire        iop_irq_base;
+    wire        iop_irq;
+    wire        iop_nmi_base;
+    wire        iop_nmi;
     wire        wdt_nmi;
     wire        wdt_host_alert;
     wire        wdt_expired;
     wire        wake_latch;
 
-    // Core memory interface
     wire [31:0] core_mem_addr;
     wire [31:0] core_mem_wdata;
     wire [3:0]  core_mem_wmask;
@@ -65,53 +103,48 @@ module attoio_macro (
     wire        core_mem_rbusy;
     wire        core_mem_wbusy;
 
-    // Core PC output (unused — no hardware breakpoints)
-    wire [9:0]  core_pc_out;
+    wire [10:0] core_pc_out;    /* ADDR_WIDTH = 11 */
 
-    // SRAM A ports
-    wire [6:0]  sram_a_a0;
-    wire [31:0] sram_a_di0;
-    wire [3:0]  sram_a_we0;
-    wire        sram_a_en0;
-    wire [31:0] sram_a_do0;
+    /* SRAM A banks */
+    wire [6:0]  sram_a0_a0;  wire [31:0] sram_a0_di0;
+    wire [3:0]  sram_a0_we0; wire        sram_a0_en0;
+    wire [31:0] sram_a0_do0;
 
-    // SRAM B0 ports
-    wire [4:0]  sram_b0_a0;
-    wire [31:0] sram_b0_di0;
-    wire [3:0]  sram_b0_we0;
-    wire        sram_b0_en0;
+    wire [6:0]  sram_a1_a0;  wire [31:0] sram_a1_di0;
+    wire [3:0]  sram_a1_we0; wire        sram_a1_en0;
+    wire [31:0] sram_a1_do0;
+
+    wire [6:0]  sram_a2_a0;  wire [31:0] sram_a2_di0;
+    wire [3:0]  sram_a2_we0; wire        sram_a2_en0;
+    wire [31:0] sram_a2_do0;
+
+    /* SRAM B banks */
+    wire [4:0]  sram_b0_a0;  wire [31:0] sram_b0_di0;
+    wire [3:0]  sram_b0_we0; wire        sram_b0_en0;
     wire [31:0] sram_b0_do0;
 
-    // SRAM B1 ports
-    wire [4:0]  sram_b1_a0;
-    wire [31:0] sram_b1_di0;
-    wire [3:0]  sram_b1_we0;
-    wire        sram_b1_en0;
+    wire [4:0]  sram_b1_a0;  wire [31:0] sram_b1_di0;
+    wire [3:0]  sram_b1_we0; wire        sram_b1_en0;
     wire [31:0] sram_b1_do0;
 
-    // MMIO page
     wire        mmio_sel;
     wire [31:0] mmio_rdata;
 
-    // Memmux host-side rdata (SRAM only)
     wire [31:0] memmux_host_rdata;
     wire        memmux_host_ready;
 
-    // GPIO MMIO
     wire [31:0] gpio_mmio_rdata;
-
-    // SPI MMIO
     wire [31:0] spi_mmio_rdata;
-
-    // Ctrl MMIO (doorbell reads from IOP side)
     wire [31:0] ctrl_iop_mmio_rdata;
-
-    // Host register interface
-    wire        host_sel_reg = host_addr[9] & host_addr[8];  // 0x300+
+    wire [31:0] timer_mmio_rdata;
+    wire [31:0] wdt_mmio_rdata;
     wire [31:0] ctrl_host_rdata;
 
+    /* Host-side register-page select: MMIO page @ 0x700 (addr[10:8] = 111) */
+    wire host_sel_reg = (host_addr[10:8] == 3'b111);
+
     // ====================================================================
-    // Core MMIO bus signals
+    // Core MMIO decode
     // ====================================================================
     wire [7:0]  mmio_addr   = core_mem_addr[7:0];
     wire [5:0]  mmio_woff   = core_mem_addr[7:2];
@@ -119,24 +152,14 @@ module attoio_macro (
     wire        mmio_wen    = mmio_sel & (|core_mem_wmask);
     wire        mmio_ren    = mmio_sel & core_mem_rstrb;
 
-    // MMIO sub-block select based on word offset
-    // GPIO:  0x00..0x1B (regs @ 0x300..0x36C incl. PADCTL, WAKE_LATCH,
-    //                   WAKE_FLAGS, WAKE_MASK, WAKE_EDGE)
-    // Ctrl:  0x20..0x21 (doorbells)
-    // SPI:   0x24..0x26
-    // Timer: 0x28..0x2F
-    // WDT:   0x30..0x32 (WDT_COUNT, WDT_CTL, WDT_STATUS)
+    /* Sub-block selects — word offsets within the 256 B MMIO page are
+     * unchanged from v1; only the page base moved (0x300 → 0x700). */
     wire mmio_is_gpio  = (mmio_woff <= 6'h1B);
     wire mmio_is_ctrl  = (mmio_woff >= 6'h20) && (mmio_woff <= 6'h21);
     wire mmio_is_spi   = (mmio_woff >= 6'h24) && (mmio_woff <= 6'h26);
     wire mmio_is_timer = (mmio_woff >= 6'h28) && (mmio_woff <= 6'h2F);
     wire mmio_is_wdt   = (mmio_woff >= 6'h30) && (mmio_woff <= 6'h32);
 
-    // ====================================================================
-    // MMIO read-data mux
-    // ====================================================================
-    wire [31:0] timer_mmio_rdata;
-    wire [31:0] wdt_mmio_rdata;
     assign mmio_rdata = mmio_is_gpio  ? gpio_mmio_rdata :
                         mmio_is_ctrl  ? ctrl_iop_mmio_rdata :
                         mmio_is_spi   ? spi_mmio_rdata :
@@ -144,9 +167,7 @@ module attoio_macro (
                         mmio_is_wdt   ? wdt_mmio_rdata :
                         32'h0;
 
-    // ====================================================================
-    // Host read-data mux — SRAM vs registers
-    // ====================================================================
+    /* Host read-data + ready muxing */
     assign host_rdata = host_sel_reg ? ctrl_host_rdata : memmux_host_rdata;
     assign host_ready = host_sel_reg ? (host_wen | host_ren) : memmux_host_ready;
 
@@ -154,42 +175,55 @@ module attoio_macro (
     // AttoRV32 core
     // ====================================================================
     AttoRV32 #(
-        .ADDR_WIDTH (10),
+        .ADDR_WIDTH (11),
         .RV32E      (1),
-        .MTVEC_ADDR (10'h010)
+        .MTVEC_ADDR (11'h010)
     ) u_core (
         .clk               (clk_iop),
-        .reset              (~iop_reset & rst_n),   // active-low
-        .mem_addr           (core_mem_addr),
-        .mem_wdata          (core_mem_wdata),
-        .mem_wmask          (core_mem_wmask),
-        .mem_rdata          (core_mem_rdata),
-        .mem_rstrb          (core_mem_rstrb),
-        .mem_rbusy          (core_mem_rbusy),
-        .mem_wbusy          (core_mem_wbusy),
-        .interrupt_request  (iop_irq),
-        .nmi                (iop_nmi),
-        .dbg_halt_req       (1'b0),
-        .pc_out             (core_pc_out)
+        .reset             (~iop_reset & rst_n),
+        .mem_addr          (core_mem_addr),
+        .mem_wdata         (core_mem_wdata),
+        .mem_wmask         (core_mem_wmask),
+        .mem_rdata         (core_mem_rdata),
+        .mem_rstrb         (core_mem_rstrb),
+        .mem_rbusy         (core_mem_rbusy),
+        .mem_wbusy         (core_mem_wbusy),
+        .interrupt_request (iop_irq),
+        .nmi               (iop_nmi),
+        .dbg_halt_req      (1'b0),
+        .pc_out            (core_pc_out)
     );
 
     // ====================================================================
-    // SRAM A — 128x32 DFFRAM (sysclk)
-    // Clocked by sysclk so host can write during reset at full speed.
-    // Core signals only change on clk_iop edges (subset of sysclk edges),
-    // so this is inherently safe — SRAM sees stable inputs most cycles.
+    // SRAM A — three 128x32 DFFRAM banks (sysclk)
     // ====================================================================
-    DFFRAM #(.WORDS(128), .WSIZE(4)) u_sram_a (
+    DFFRAM #(.WORDS(128), .WSIZE(4)) u_sram_a0 (
         .CLK (sysclk),
-        .WE0 (sram_a_we0),
-        .EN0 (sram_a_en0),
-        .A0  (sram_a_a0),
-        .Di0 (sram_a_di0),
-        .Do0 (sram_a_do0)
+        .WE0 (sram_a0_we0),
+        .EN0 (sram_a0_en0),
+        .A0  (sram_a0_a0),
+        .Di0 (sram_a0_di0),
+        .Do0 (sram_a0_do0)
+    );
+    DFFRAM #(.WORDS(128), .WSIZE(4)) u_sram_a1 (
+        .CLK (sysclk),
+        .WE0 (sram_a1_we0),
+        .EN0 (sram_a1_en0),
+        .A0  (sram_a1_a0),
+        .Di0 (sram_a1_di0),
+        .Do0 (sram_a1_do0)
+    );
+    DFFRAM #(.WORDS(128), .WSIZE(4)) u_sram_a2 (
+        .CLK (sysclk),
+        .WE0 (sram_a2_we0),
+        .EN0 (sram_a2_en0),
+        .A0  (sram_a2_a0),
+        .Di0 (sram_a2_di0),
+        .Do0 (sram_a2_do0)
     );
 
     // ====================================================================
-    // SRAM B0 — 32x32 DFFRAM (sysclk)
+    // SRAM B — mailbox (sysclk)
     // ====================================================================
     DFFRAM #(.WORDS(32), .WSIZE(4)) u_sram_b0 (
         .CLK (sysclk),
@@ -199,10 +233,6 @@ module attoio_macro (
         .Di0 (sram_b0_di0),
         .Do0 (sram_b0_do0)
     );
-
-    // ====================================================================
-    // SRAM B1 — 32x32 DFFRAM (sysclk)
-    // ====================================================================
     DFFRAM #(.WORDS(32), .WSIZE(4)) u_sram_b1 (
         .CLK (sysclk),
         .WE0 (sram_b1_we0),
@@ -216,65 +246,74 @@ module attoio_macro (
     // Memory mux
     // ====================================================================
     attoio_memmux u_memmux (
-        .sysclk         (sysclk),
-        .clk_iop        (clk_iop),
-        .rst_n          (rst_n),
-        .iop_reset      (iop_reset),
+        .sysclk      (sysclk),
+        .clk_iop     (clk_iop),
+        .rst_n       (rst_n),
+        .iop_reset   (iop_reset),
 
-        // Core interface
-        .core_addr      (core_mem_addr[9:0]),
-        .core_wdata     (core_mem_wdata),
-        .core_wmask     (core_mem_wmask),
-        .core_rstrb     (core_mem_rstrb),
-        .core_rdata     (core_mem_rdata),
-        .core_rbusy     (core_mem_rbusy),
-        .core_wbusy     (core_mem_wbusy),
+        .core_addr   (core_mem_addr[10:0]),
+        .core_wdata  (core_mem_wdata),
+        .core_wmask  (core_mem_wmask),
+        .core_rstrb  (core_mem_rstrb),
+        .core_rdata  (core_mem_rdata),
+        .core_rbusy  (core_mem_rbusy),
+        .core_wbusy  (core_mem_wbusy),
 
-        // Host interface
-        .host_addr      (host_addr),
-        .host_wdata     (host_wdata),
-        .host_wmask     (host_wmask),
-        .host_wen       (host_wen & ~host_sel_reg),
-        .host_ren       (host_ren & ~host_sel_reg),
-        .host_rdata     (memmux_host_rdata),
-        .host_ready     (memmux_host_ready),
+        .host_addr   (host_addr),
+        .host_wdata  (host_wdata),
+        .host_wmask  (host_wmask),
+        .host_wen    (host_wen & ~host_sel_reg),
+        .host_ren    (host_ren & ~host_sel_reg),
+        .host_rdata  (memmux_host_rdata),
+        .host_ready  (memmux_host_ready),
 
-        // MMIO page select
-        .mmio_sel       (mmio_sel),
-        .mmio_rdata     (mmio_rdata),
+        .mmio_sel    (mmio_sel),
+        .mmio_rdata  (mmio_rdata),
 
-        // SRAM A ports
-        .sram_a_a0      (sram_a_a0),
-        .sram_a_di0     (sram_a_di0),
-        .sram_a_we0     (sram_a_we0),
-        .sram_a_en0     (sram_a_en0),
-        .sram_a_do0     (sram_a_do0),
+        .sram_a0_a0  (sram_a0_a0),
+        .sram_a0_di0 (sram_a0_di0),
+        .sram_a0_we0 (sram_a0_we0),
+        .sram_a0_en0 (sram_a0_en0),
+        .sram_a0_do0 (sram_a0_do0),
 
-        // SRAM B0 ports
-        .sram_b0_a0     (sram_b0_a0),
-        .sram_b0_di0    (sram_b0_di0),
-        .sram_b0_we0    (sram_b0_we0),
-        .sram_b0_en0    (sram_b0_en0),
-        .sram_b0_do0    (sram_b0_do0),
+        .sram_a1_a0  (sram_a1_a0),
+        .sram_a1_di0 (sram_a1_di0),
+        .sram_a1_we0 (sram_a1_we0),
+        .sram_a1_en0 (sram_a1_en0),
+        .sram_a1_do0 (sram_a1_do0),
 
-        // SRAM B1 ports
-        .sram_b1_a0     (sram_b1_a0),
-        .sram_b1_di0    (sram_b1_di0),
-        .sram_b1_we0    (sram_b1_we0),
-        .sram_b1_en0    (sram_b1_en0),
-        .sram_b1_do0    (sram_b1_do0)
+        .sram_a2_a0  (sram_a2_a0),
+        .sram_a2_di0 (sram_a2_di0),
+        .sram_a2_we0 (sram_a2_we0),
+        .sram_a2_en0 (sram_a2_en0),
+        .sram_a2_do0 (sram_a2_do0),
+
+        .sram_b0_a0  (sram_b0_a0),
+        .sram_b0_di0 (sram_b0_di0),
+        .sram_b0_we0 (sram_b0_we0),
+        .sram_b0_en0 (sram_b0_en0),
+        .sram_b0_do0 (sram_b0_do0),
+
+        .sram_b1_a0  (sram_b1_a0),
+        .sram_b1_di0 (sram_b1_di0),
+        .sram_b1_we0 (sram_b1_we0),
+        .sram_b1_en0 (sram_b1_en0),
+        .sram_b1_do0 (sram_b1_do0)
     );
 
     // ====================================================================
-    // GPIO + PADCTL + WAKE_LATCH
+    // GPIO + PADCTL + wake
     // ====================================================================
-
-    // SPI pin override signals
     wire        spi_active;
     wire [3:0]  spi_sck_pin;
     wire [3:0]  spi_mosi_pin;
     wire        spi_sck_val;
     wire        spi_mosi_val;
+
+    wire [15:0] gpio_pad_out;
+    wire [15:0] gpio_pad_oe;
+    wire [15:0] timer_pad_sel;
+    wire [15:0] timer_pad_val;
 
     attoio_gpio u_gpio (
         .sysclk     (sysclk),
@@ -302,34 +341,25 @@ module attoio_macro (
         .pad_ctl    (pad_ctl)
     );
 
-    // ====================================================================
-    // Pad output mux — timer-driven pads override GPIO on selected pins.
-    // When timer_pad_sel[p] = 1, the pin's drive value is timer_pad_val[p]
-    // and its OE is forced high so the toggle reaches the pad.
-    // ====================================================================
-    wire [15:0] gpio_pad_out;
-    wire [15:0] gpio_pad_oe;
-    wire [15:0] timer_pad_sel;
-    wire [15:0] timer_pad_val;
-
-    assign pad_out = (gpio_pad_out & ~timer_pad_sel) | (timer_pad_val & timer_pad_sel);
-    assign pad_oe  = gpio_pad_oe | timer_pad_sel;
+    /* Timer pad override mux */
+    assign pad_out = (gpio_pad_out & ~timer_pad_sel) |
+                     (timer_pad_val &  timer_pad_sel);
+    assign pad_oe  =  gpio_pad_oe | timer_pad_sel;
 
     // ====================================================================
     // Control — doorbells + IOP_CTRL
     // ====================================================================
+    wire irq_to_host_ctrl;
     attoio_ctrl u_ctrl (
         .sysclk         (sysclk),
         .rst_n          (rst_n),
 
-        // Host-side registers
         .host_reg_addr  (host_addr[3:0]),
         .host_reg_wdata (host_wdata),
         .host_reg_wen   (host_wen & host_sel_reg),
         .host_reg_ren   (host_ren & host_sel_reg),
         .host_reg_rdata (ctrl_host_rdata),
 
-        // IOP-side doorbell access
         .iop_mmio_woff  (mmio_woff),
         .iop_mmio_wdata (core_mem_wdata),
         .iop_mmio_wen   (mmio_wen),
@@ -344,25 +374,15 @@ module attoio_macro (
         .irq_to_host    (irq_to_host_ctrl)
     );
 
-    // irq_to_host = doorbell_c2h (from ctrl) | wdt_host_alert
-    wire irq_to_host_ctrl;
     assign irq_to_host = irq_to_host_ctrl | wdt_host_alert;
 
     // ====================================================================
-    // SPI shift helper
+    // SPI shift helper — synchronize pad_in onto clk_iop first
     // ====================================================================
-    // Provide synchronized pad_in to SPI (use gpio's sync output)
-    // We need to tap the synchronized value from attoio_gpio. Since the
-    // sync regs are internal to gpio, we re-synchronize here on clk_iop
-    // for the SPI module. This is safe because pad_in_sync2 on sysclk
-    // is stable for N clk_iop cycles.
     reg [15:0] pad_in_iop_sync;
     always @(posedge clk_iop or negedge rst_n) begin
-        if (!rst_n)
-            pad_in_iop_sync <= 16'h0;
-        else
-            pad_in_iop_sync <= pad_in;  // single-flop sufficient: already
-                                         // 2-flop synced in gpio on sysclk
+        if (!rst_n) pad_in_iop_sync <= 16'h0;
+        else        pad_in_iop_sync <= pad_in;
     end
 
     attoio_spi u_spi (
@@ -385,38 +405,33 @@ module attoio_macro (
     );
 
     // ====================================================================
-    // TIMER — 24-bit counter + 4 compares + 1 capture
-    // Resets on global rst_n OR whenever firmware is held in reset so
-    // every IOP boot starts with a clean timer.
+    // TIMER
     // ====================================================================
     wire timer_irq;
     attoio_timer u_timer (
-        .clk_iop      (clk_iop),
-        .rst_n        (rst_n & ~iop_reset),
+        .clk_iop       (clk_iop),
+        .rst_n         (rst_n & ~iop_reset),
 
-        .mmio_woff    (mmio_woff),
-        .mmio_wdata   (core_mem_wdata),
-        .mmio_wmask   (core_mem_wmask),
-        .mmio_wen     (mmio_wen & mmio_is_timer),
-        .mmio_ren     (mmio_ren & mmio_is_timer),
-        .mmio_rdata   (timer_mmio_rdata),
+        .mmio_woff     (mmio_woff),
+        .mmio_wdata    (core_mem_wdata),
+        .mmio_wmask    (core_mem_wmask),
+        .mmio_wen      (mmio_wen & mmio_is_timer),
+        .mmio_ren      (mmio_ren & mmio_is_timer),
+        .mmio_rdata    (timer_mmio_rdata),
 
-        .pad_in_sync  (pad_in_iop_sync),
+        .pad_in_sync   (pad_in_iop_sync),
 
-        .timer_irq    (timer_irq),
+        .timer_irq     (timer_irq),
 
         .timer_pad_sel (timer_pad_sel),
         .timer_pad_val (timer_pad_val)
     );
 
-    // Combine timer IRQ into the core interrupt line,
-    // and WDT expiry into the NMI line.
     assign iop_irq = iop_irq_base | timer_irq;
     assign iop_nmi = iop_nmi_base | wdt_nmi;
 
     // ====================================================================
-    // WDT — 16-bit watchdog
-    // Reset on rst_n OR iop_reset so each firmware boot starts disarmed.
+    // WDT
     // ====================================================================
     attoio_wdt u_wdt (
         .clk_iop        (clk_iop),

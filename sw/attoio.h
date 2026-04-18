@@ -14,10 +14,13 @@
 #include <stdint.h>
 
 /* ------------------------------------------------------------------ */
-/*  Memory map                                                        */
+/*  Memory map (v2, 11-bit address space)                             */
+/*    0x000 – 0x5FF  1536 B  SRAM A (code + data + stack)             */
+/*    0x600 – 0x6FF   256 B  SRAM B (mailbox)                         */
+/*    0x700 – 0x7FF   256 B  MMIO page                                */
 /* ------------------------------------------------------------------ */
-#define ATTOIO_MMIO_BASE    0x00000300u
-#define ATTOIO_MAILBOX_BASE 0x00000200u
+#define ATTOIO_MMIO_BASE    0x00000700u
+#define ATTOIO_MAILBOX_BASE 0x00000600u
 
 /* ------------------------------------------------------------------ */
 /*  GPIO                                                              */
