@@ -56,7 +56,7 @@ Plan: `docs/examples_plan.md` · each example links to its firmware
 |---|---|---|---|
 | E5 | HD44780 character LCD | ☑ | Phase 5b — 4-bit mode, RS/E/D4-D7 on pads 9-14; 5 init commands + "AttoIO!" data (12 bytes) verified against behavioural model. 362 B code. |
 | E6 | TM1637 7-seg | ☑ | `922975a` — 4-digit display "1234" @ full brightness; 7 bytes (40 C0 06 5B 4F 66 8F) verified against behavioral slave with restart-aware FSM. |
-| E7 | HT1621 segment LCD | ☐ | — |
+| E7 | HT1621 segment LCD | ☑ | Phase 5c — 3-wire mode (CS/WR/DATA on pads 9-11); 3 transactions verified bit-for-bit: SYS_EN (0xE06), LCD_ON (0xE0E), WRITE@0=0x1234 (25 bits 0x1001234). |
 
 ### Tier 3 — Motor / power
 
