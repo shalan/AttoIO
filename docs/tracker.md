@@ -47,15 +47,15 @@ Plan: `docs/examples_plan.md` · each example links to its firmware
 |---|---|---|---|
 | E1 | UART TX + RX (9600 – 1 Mbaud) | ☑ | 1a: TX "Hello, AttoIO" @ 115200. 1b: RX via CMP1 1.5-bit offset + CMP0 auto-reload, echo "ABCD" round-trip. |
 | E2 | SPI master | ☑ | Mode 0 @ pad[2-5]; 4-byte TX/RX round-trip with slave model; uses SPI shift helper (16 clk_iop/byte). |
-| E3 | I²C master | ☐ | — |
-| E4 | WS2812 LED driver | ☐ | — |
+| E3 | I²C master | ☑ | `bdde1d5` — 24C-style EEPROM model: 16-byte block write + 16-byte sequential read, byte-for-byte verified. |
+| E4 | WS2812 LED driver | ◐ | `841624b` — TIMER pad-toggle + bootstrap to fix polarity; framework + waveform shape verified, strict per-bit timing needs shadow-CMP1 HW assist (45/71 within ±8 cycles). |
 
 ### Tier 2 — Displays
 
 | # | Example | Status | Commit |
 |---|---|---|---|
-| E5 | HD44780 character LCD | ☐ | — |
-| E6 | TM1637 7-seg | ☐ | — |
+| E5 | HD44780 character LCD | ☑ | Phase 5b — 4-bit mode, RS/E/D4-D7 on pads 9-14; 5 init commands + "AttoIO!" data (12 bytes) verified against behavioural model. 362 B code. |
+| E6 | TM1637 7-seg | ☑ | `922975a` — 4-digit display "1234" @ full brightness; 7 bytes (40 C0 06 5B 4F 66 8F) verified against behavioral slave with restart-aware FSM. |
 | E7 | HT1621 segment LCD | ☐ | — |
 
 ### Tier 3 — Motor / power
