@@ -35,3 +35,7 @@ __pycache__/
 *.sdf
 *.spef
 *.def.bak
+
+# ---- LibreLane flow ------------------------------------------------------
+flow/librelane/venv/
+flow/librelane/runs/
