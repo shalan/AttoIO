@@ -114,18 +114,10 @@ module attoio_macro (
     wire [3:0]  sram_a1_we0; wire        sram_a1_en0;
     wire [31:0] sram_a1_do0;
 
-    wire [6:0]  sram_a2_a0;  wire [31:0] sram_a2_di0;
-    wire [3:0]  sram_a2_we0; wire        sram_a2_en0;
-    wire [31:0] sram_a2_do0;
-
-    /* SRAM B banks */
-    wire [4:0]  sram_b0_a0;  wire [31:0] sram_b0_di0;
-    wire [3:0]  sram_b0_we0; wire        sram_b0_en0;
-    wire [31:0] sram_b0_do0;
-
-    wire [4:0]  sram_b1_a0;  wire [31:0] sram_b1_di0;
-    wire [3:0]  sram_b1_we0; wire        sram_b1_en0;
-    wire [31:0] sram_b1_do0;
+    /* SRAM B (mailbox, 128 B) */
+    wire [4:0]  sram_b_a0;  wire [31:0] sram_b_di0;
+    wire [3:0]  sram_b_we0; wire        sram_b_en0;
+    wire [31:0] sram_b_do0;
 
     wire        mmio_sel;
     wire [31:0] mmio_rdata;
@@ -213,33 +205,16 @@ module attoio_macro (
         .Di0 (sram_a1_di0),
         .Do0 (sram_a1_do0)
     );
-    DFFRAM #(.WORDS(128), .WSIZE(4)) u_sram_a2 (
-        .CLK (sysclk),
-        .WE0 (sram_a2_we0),
-        .EN0 (sram_a2_en0),
-        .A0  (sram_a2_a0),
-        .Di0 (sram_a2_di0),
-        .Do0 (sram_a2_do0)
-    );
-
     // ====================================================================
-    // SRAM B — mailbox (sysclk)
+    // SRAM B — mailbox (sysclk, 128 B)
     // ====================================================================
-    DFFRAM #(.WORDS(32), .WSIZE(4)) u_sram_b0 (
+    DFFRAM #(.WORDS(32), .WSIZE(4)) u_sram_b (
         .CLK (sysclk),
-        .WE0 (sram_b0_we0),
-        .EN0 (sram_b0_en0),
-        .A0  (sram_b0_a0),
-        .Di0 (sram_b0_di0),
-        .Do0 (sram_b0_do0)
-    );
-    DFFRAM #(.WORDS(32), .WSIZE(4)) u_sram_b1 (
-        .CLK (sysclk),
-        .WE0 (sram_b1_we0),
-        .EN0 (sram_b1_en0),
-        .A0  (sram_b1_a0),
-        .Di0 (sram_b1_di0),
-        .Do0 (sram_b1_do0)
+        .WE0 (sram_b_we0),
+        .EN0 (sram_b_en0),
+        .A0  (sram_b_a0),
+        .Di0 (sram_b_di0),
+        .Do0 (sram_b_do0)
     );
 
     // ====================================================================
@@ -282,23 +257,11 @@ module attoio_macro (
         .sram_a1_en0 (sram_a1_en0),
         .sram_a1_do0 (sram_a1_do0),
 
-        .sram_a2_a0  (sram_a2_a0),
-        .sram_a2_di0 (sram_a2_di0),
-        .sram_a2_we0 (sram_a2_we0),
-        .sram_a2_en0 (sram_a2_en0),
-        .sram_a2_do0 (sram_a2_do0),
-
-        .sram_b0_a0  (sram_b0_a0),
-        .sram_b0_di0 (sram_b0_di0),
-        .sram_b0_we0 (sram_b0_we0),
-        .sram_b0_en0 (sram_b0_en0),
-        .sram_b0_do0 (sram_b0_do0),
-
-        .sram_b1_a0  (sram_b1_a0),
-        .sram_b1_di0 (sram_b1_di0),
-        .sram_b1_we0 (sram_b1_we0),
-        .sram_b1_en0 (sram_b1_en0),
-        .sram_b1_do0 (sram_b1_do0)
+        .sram_b_a0   (sram_b_a0),
+        .sram_b_di0  (sram_b_di0),
+        .sram_b_we0  (sram_b_we0),
+        .sram_b_en0  (sram_b_en0),
+        .sram_b_do0  (sram_b_do0)
     );
 
     // ====================================================================

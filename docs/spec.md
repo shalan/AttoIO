@@ -39,19 +39,18 @@ on a different "personality" per application without re-taping-out.
 ┌───────────────────────── attoio_macro ──────────────────────────┐
 │                                                                 │
 │  ┌──────────────┐                                               │
-│  │              │──── SRAM A (128×32 DFFRAM, 512 B) ─────────  │
-│  │  AttoRV32    │         private (code + data + stack)         │
-│  │  (RV32EC)    │                                               │
-│  │              │──── SRAM B0 (32×32 DFFRAM, 128 B) ┐          │
-│  │  ADDR_WIDTH  │                                    ├─ ARB ───┤── host bus
-│  │  = 10        │──── SRAM B1 (32×32 DFFRAM, 128 B) ┘          │
-│  │              │         mailbox (256 B combined)              │
+│  │              │──── SRAM A0 (128×32 DFFRAM, 512 B) ────────  │
+│  │  AttoRV32    │──── SRAM A1 (128×32 DFFRAM, 512 B) ────────  │
+│  │  (RV32EC)    │         private (code + data + stack)         │
+│  │              │                                               │
+│  │  ADDR_WIDTH  │──── SRAM B  (32×32 DFFRAM, 128 B) ─ ARB ──┤── APB4
+│  │  = 11        │         mailbox, host-priority                │
 │  │              │                                               │
 │  │              │──── MMIO page ────────────────────────────── │
-│  │              │     GPIO, PADCTL, doorbells, SPI shifter     │
+│  │              │     GPIO, PADCTL, TIMER, WDT, doorbells, SPI  │
 │  │              │                                               │
-│  │ interrupt_rq │◄── DOORBELL_H2C | WAKE_LATCH                 │
-│  │ nmi          │◄── IOP_CTRL.nmi                              │
+│  │ interrupt_rq │◄── DOORBELL_H2C | WAKE_LATCH | TIMER_IRQ     │
+│  │ nmi          │◄── IOP_CTRL.nmi | WDT expired                │
 │  │ reset        │◄── IOP_CTRL.reset                            │
 │  │ dbg_halt_req │◄── 1'b0                                      │
 │  └──────────────┘                                               │
@@ -84,32 +83,37 @@ on a different "personality" per application without re-taping-out.
 ### 3.3 What is inside the macro
 
 - AttoRV32 core (RV32EC, `NRV_SINGLE_PORT_REGF`, `NRV_SHARED_ADDER`,
-  `NRV_SERIAL_SHIFT`, no M, no perf CSRs, no debug)
-- 3 DFFRAM macros (1× 128×32, 2× 32×32)
-- Memory mux + address decoder
+  `NRV_SERIAL_SHIFT`, `ADDR_WIDTH=11`, no M, no perf CSRs, no debug)
+- 3 DFFRAM macros (2× 128×32 for SRAM A, 1× 32×32 for SRAM B)
+- Memory mux + address decoder (`attoio_memmux.v`)
 - SRAM A port mux (reset/run)
-- SRAM B host-priority arbiter
+- SRAM B host-priority arbiter + Do0 capture latch (BUG-001 fix)
+- APB4 slave wrapper (`attoio_apb_if.v`)
 - GPIO registers (OUT, OE, SET/CLR aliases)
 - 16× 2-flop input synchronizers (on `sysclk`)
-- WAKE_LATCH (edge detect on `sysclk`)
+- Per-pin WAKE flags + mask + edge config
 - PADCTL registers (16 × 8 b)
+- TIMER block (24-bit CNT, 4× CMP, 1 CAP, PWM-out, IRQ)
+- Watchdog timer (16-bit reload, NMI + host alert on expire)
 - SPI shift helper (TX/RX shift registers + auto-clock)
-- Doorbells (H2C, C2H)
+- Doorbells (H2C, C2H) + host-driven NMI pulse
 - IOP_CTRL register
 
 ## 4. Physical memory
 
-Total SRAM: **768 bytes** in three
-[DFFRAM](https://github.com/shalan/sky130_gen_dffram) macros.
+Total SRAM: **1152 bytes** in three
+[DFFRAM](https://github.com/shalan/sky130_gen_dffram) macros (Phase 0.8
+layout — was 1792 B across five macros before the downsize).
 
 | Macro | DFFRAM config | Size | Module | Contents |
 |---|---|---:|---|---|
-| **SRAM A** | 128×32 | 512 B | `DFFRAM #(.WORDS(128), .WSIZE(4))` | Code, data, stack (IOP-private) |
-| **SRAM B0** | 32×32 | 128 B | `DFFRAM #(.WORDS(32), .WSIZE(4))` | Mailbox low half (`0x200–0x27F`) |
-| **SRAM B1** | 32×32 | 128 B | `DFFRAM #(.WORDS(32), .WSIZE(4))` | Mailbox high half (`0x280–0x2FF`) |
+| **SRAM A0** | 128×32 | 512 B | `DFFRAM #(.WORDS(128), .WSIZE(4))` | Code/data/stack low half (`0x000–0x1FF`) |
+| **SRAM A1** | 128×32 | 512 B | `DFFRAM #(.WORDS(128), .WSIZE(4))` | Code/data/stack high half (`0x200–0x3FF`) |
+| **SRAM B**  | 32×32  | 128 B | `DFFRAM #(.WORDS(32), .WSIZE(4))`  | Mailbox (`0x600–0x67F`), host + IOP shared |
 
-All three are single-port, single-clock. SRAM B0 and B1 together form a
-contiguous 256 B mailbox; the two-macro split is invisible to firmware.
+All three are single-port, single-clock. The A0/A1 split is invisible
+to firmware — `sw/link.ld` sees one contiguous 1024 B region.  The
+mailbox is a single 128 B bank with host-priority arbitration.
 
 ### 4.1 DFFRAM port interface
 
@@ -136,11 +140,14 @@ Port mapping to AttoRV32 core signals:
 
 Read latency is 1 cycle; `Do0` holds its value when `EN0 = 0`.
 
-### 4.2 Why two macros for the mailbox
+### 4.2 Why a single macro for the mailbox
 
-DFFRAM does not support 64-word configurations. Supported word counts are
-32, 128, 256, 512, 1024, 2048. Two 32×32 macros compose a 256 B mailbox
-using only standard DFFRAM sizes.
+Firmware usage across all 14 example programs peaks at 68 B of mailbox
+traffic (one command staged at byte 0x40 from the base).  A 128 B
+mailbox using one 32×32 DFFRAM absorbs that with ~60 B headroom and
+avoids the B0/B1 arbitration split that the 256 B layout used to
+need.  The single-bank mailbox also halves the BUG-001 Do0 capture-
+latch cost in memmux (from 2 × 32 flops to 1 × 32 flops).
 
 ### 4.3 Why separate SRAMs for private and mailbox
 
@@ -152,26 +159,28 @@ to access concurrently. That situation exists only for the mailbox.
 
 ## 5. Memory map (IOP view)
 
-Total address space: 1 KiB (`ADDR_WIDTH = 10`).
+Total address space: 2 KiB (`ADDR_WIDTH = 11`).  The decoded regions
+cover 1024 + 128 + 256 = 1408 B; the rest returns 0 on read and drops
+writes silently.
 
 | Range | Size | Maps to | Notes |
 |---|---:|---|---|
-| `0x000 – 0x1FF` | 512 B | SRAM A (private) | Reset vector at `0x000`, ISR at `MTVEC_ADDR = 0x010` |
-| `0x200 – 0x27F` | 128 B | SRAM B0 (mailbox low) | ┐ contiguous 256 B mailbox |
-| `0x280 – 0x2FF` | 128 B | SRAM B1 (mailbox high) | ┘ shared with host |
-| `0x300 – 0x3FF` | 256 B | MMIO page | GPIO, PADCTL, doorbells, SPI shifter — IOP-only |
+| `0x000 – 0x3FF` | 1024 B | SRAM A (private) | Reset vector at `0x000`, ISR at `MTVEC_ADDR = 0x010` |
+| `0x400 – 0x5FF` |  — | *unmapped* | reads return 0, writes dropped |
+| `0x600 – 0x67F` | 128 B | SRAM B (mailbox) | shared with host (host-priority arbiter) |
+| `0x680 – 0x6FF` |  — | *unmapped* | reads return 0, writes dropped |
+| `0x700 – 0x7FF` | 256 B | MMIO page | GPIO, PADCTL, doorbells, SPI, TIMER, WDT, IOP_CTRL |
 
 ### 5.1 Address decode
 
 ```
-mem_addr[9]   = 0  →  SRAM A           A0 = mem_addr[8:2]  (7-bit, 128 words)
-mem_addr[9:8] = 10 →  SRAM B0 / B1
-                       mem_addr[7] = 0  →  SRAM B0   A0 = mem_addr[6:2]  (5-bit, 32 words)
-                       mem_addr[7] = 1  →  SRAM B1   A0 = mem_addr[6:2]  (5-bit, 32 words)
-mem_addr[9:8] = 11 →  MMIO page        decoded by mem_addr[7:2]
+addr[10]     = 0      →  SRAM A           A0 = addr[8:2]   (7-bit, 128 words per bank)
+                         addr[9] picks A0 (0x000–0x1FF) vs A1 (0x200–0x3FF) — transparent
+addr[10:7]   = 1100   →  SRAM B (mailbox) A0 = addr[6:2]   (5-bit, 32 words)
+addr[10:8]   = 111    →  MMIO page        decoded by addr[7:2]
 ```
 
-### 5.2 SRAM A layout (IOP-private, 512 B)
+### 5.2 SRAM A layout (IOP-private, 1024 B)
 
 ```
 0x000           .reset      reset trampoline (≤ 16 B)
@@ -181,42 +190,47 @@ mem_addr[9:8] = 11 →  MMIO page        decoded by mem_addr[7:2]
  ...            .data       initialized data
  ...            .bss        zero-initialized data
  ...
-0x1FF           stack top   stack grows down
+0x3FF           stack top   stack grows down (64 B reserved by link.ld)
 ```
 
-**Code budget:** after the reset trampoline (~16 B), ISR entry (~32 B),
-and reserving ~80 B for `.data`/`.bss` and ~80 B for stack, roughly
-**~300–350 B of `.text`** remains (≈150–175 RV32C instructions). This
-comfortably fits a single peripheral emulator (UART / I²C slave / GPIO
-expander / SPI slave).
+**Code budget:** all 14 current example firmwares fit, the largest
+(`i2c_eeprom`) at 654 B.  With the 64 B stack reservation that leaves
+~306 B of headroom for future examples.  If a future demo exceeds
+that, the link script / RTL can be bumped back up to the v2 1536 B
+layout with minimal churn (one extra RAM128 instance, one `core_sel_a2`
+case in memmux).
 
-### 5.3 SRAM B layout (mailbox, 256 B)
+### 5.3 SRAM B layout (mailbox, 128 B)
 
-Layout is a software contract between host firmware and IOP firmware. No
-hardware enforcement. The B0/B1 macro boundary at `0x280` is invisible
-to software. A typical convention:
+Layout is a software contract between host firmware and IOP firmware.
+No hardware enforcement.  Typical usage (per the IRQ verification
+suite and wake_test / wdt_test):
 
 ```
-0x200 – 0x21F  command / request block     (host → IOP)
-0x220 – 0x23F  response / status block     (IOP → host)
-0x240 – 0x2FF  bulk data buffer            (bidirectional)
+0x600 – 0x607  sentinel / status words   (IOP → host)
+0x608 – 0x63F  response block            (IOP → host)
+0x640 – 0x67F  command / request block   (host → IOP)
 ```
 
 ## 6. Memory map (host view)
 
-Host sees AttoIO as a single peripheral block. Host-side layout
-(offsets within the block's base address):
+Host sees AttoIO as a single peripheral block on an APB4 slave.
+PADDR is 11 bits (2 KiB window).  The host sees the IOP's memory
+space 1:1, plus a 3-word IOP_CTRL window:
 
-| Offset | Size | Contents | Access |
+| Address | Size | Contents | Access |
 |---|---:|---|---|
-| `0x000 – 0x1FF` | 512 B | SRAM A (private) | RW only while `IOP_CTRL.reset = 1` |
-| `0x200 – 0x2FF` | 256 B | SRAM B0 + B1 (mailbox) | RW always (arbitrated) |
-| `0x300` | 4 B | `DOORBELL_H2C` | W1S (host sets, IOP clears) |
-| `0x304` | 4 B | `DOORBELL_C2H` | R / W1C (IOP sets, host clears) |
-| `0x308` | 4 B | `IOP_CTRL` | RW (host-only control register) |
+| `0x000 – 0x3FF` | 1024 B | SRAM A (private) | RW only while `IOP_CTRL.reset = 1` |
+| `0x600 – 0x67F` | 128 B | SRAM B (mailbox) | RW always (host-priority arbitrated) |
+| `0x700` | 4 B | `DOORBELL_H2C` | W1S (host sets, IOP clears) |
+| `0x704` | 4 B | `DOORBELL_C2H` | R / W1C (IOP sets, host clears) |
+| `0x708` | 4 B | `IOP_CTRL` | RW (host-only: reset + NMI-pulse) |
+| other  | — | — | PSLVERR tied low, reads return 0 |
 
-The IOP's MMIO page (GPIO, PADCTL, SPI shifter) is **not** visible to
-the host. Pad control is entirely the IOP's domain.
+The IOP's full MMIO page at `0x700–0x7FF` (GPIO, PADCTL, TIMER, WDT,
+SPI shifter) is **not** visible to the host outside of the three
+doorbell / control registers listed above.  Pad control is entirely
+the IOP's domain.
 
 ### 6.1 SRAM A host access gating
 

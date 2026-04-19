@@ -109,7 +109,7 @@ module tb_i2c;
         end
     endtask
 
-    reg [31:0] fw_image [0:383];
+    reg [31:0] fw_image [0:255];
     integer i;
     reg [31:0] rd;
     reg [7:0]  expected [0:3];
@@ -118,7 +118,7 @@ module tb_i2c;
         $dumpfile("tb_i2c.vcd");
         $dumpvars(0, tb_i2c);
 
-        for (i = 0; i < 384; i = i + 1) fw_image[i] = 32'h00000013;
+        for (i = 0; i < 256; i = i + 1) fw_image[i] = 32'h00000013;
         $readmemh(`FW_HEX, fw_image);
 
         PADDR = 0; PWDATA = 0; PSTRB = 0;
@@ -128,7 +128,7 @@ module tb_i2c;
         repeat (5) @(posedge sysclk);
 
         $display("--- tb_i2c: loading firmware ---");
-        for (i = 0; i < 384; i = i + 1)
+        for (i = 0; i < 256; i = i + 1)
             apb_write(i * 4, fw_image[i], 4'hF);
 
         $display("--- releasing IOP reset ---");
