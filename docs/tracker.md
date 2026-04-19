@@ -20,7 +20,8 @@ Legend: ☐ = not started · ◐ = in progress · ☑ = done · ✗ = won't do
 | H6 | **Per-pin WAKE flags + mask** (replace combined `WAKE_LATCH`) | ☑ | Phase 0.5b — `attoio_gpio.v` extended with `WAKE_FLAGS` / `WAKE_MASK` / `WAKE_EDGE`; legacy `WAKE_LATCH` preserved |
 | H7 | **Watchdog timer** (16-bit reload, NMI + host alert on expire) | ☑ | Phase 0.5c — `attoio_wdt.v`; MMIO @ 0x3C0/4/8 (now 0x7C0 in v2) |
 | H8 | **Memory map v2 + APB4 slave** (1536 B SRAM A in 3 banks; 11-bit address space; AMBA APB4 host interface) | ☑ | Phase 0.6 — `attoio_apb_if.v`, rewritten `attoio_memmux.v` with 3-bank SRAM A. AttoRV32 ADDR_WIDTH=11. Mailbox @ 0x600, MMIO @ 0x700. Setup WNS turned positive (+0.58 ns) because APB ACCESS register stage breaks the old `host_wen → CG` path. |
-| H9 | **IRQ verification suite** (TIMER, host doorbell, multi-source aggregation) | ☑ | Phase 0.6b — three new `sim/tb_irq_*.v` testbenches close the gap between `attoio_macro.v:430-431` IRQ wiring and prior coverage. Surfaced **BUG-001** (SRAM B `Do0` race during host polling, see `docs/known_bugs.md`); workaround = C2H-handshake pattern, real fix queued as Phase 0.7. |
+| H9 | **IRQ verification suite** (TIMER, host doorbell, multi-source aggregation) | ☑ | Phase 0.6b — three new `sim/tb_irq_*.v` testbenches close the gap between `attoio_macro.v:430-431` IRQ wiring and prior coverage. Surfaced **BUG-001** (SRAM B `Do0` race during host polling, see `docs/known_bugs.md`); workaround = C2H-handshake pattern, real fix shipped in Phase 0.7. |
+| H10 | **BUG-001 fix** — SRAM B `Do0` capture latches in memmux | ☑ | Phase 0.7 — `attoio_memmux.v` adds `core_b0_rdata_q`/`core_b1_rdata_q` sysclk-domain registers gated by a 1-cycle-delayed `b_grant_core & core_sel_b{0,1}`. Cost: 66 flops, no critical path impact. `tb_irq_doorbell.v` rewritten to use the polling pattern that originally tripped the bug; passes. **Full regression: 14/14 testbenches.** |
 
 ---
 

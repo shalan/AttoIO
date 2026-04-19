@@ -100,6 +100,18 @@ similarly for B1) instead of the live `sram_b0_do0`.  Cost: 64 flops
 (two 32-bit registers).  No timing impact on critical path — the
 existing `core_rd_src` register already adds a clk_iop hop.
 
-**Status:** open.  All three `tb_irq_*` tests use the C2H handshake
-workaround.  No production firmware uses host-polls-during-ISR
-patterns.  Fix is queued as a Phase 0.7 RTL touch-up.
+**Status:** **fixed in Phase 0.7** (`attoio_memmux.v`, see commit
+history).  The fix added `core_b0_rdata_q` / `core_b1_rdata_q`
+sysclk-domain capture latches gated by a one-cycle-delayed
+`b_grant_core & core_sel_b{0,1}`, exactly as proposed above.  Cost
+landed as 64 + 2 flops.  Verification: `tb_irq_doorbell.v` was
+rewritten to drop the C2H-handshake workaround and instead poll
+mailbox[0] directly while the ISR runs and reads SRAM B (the
+original BUG-001 reproducer).  It passes cleanly on the fixed RTL.
+Full regression — 14/14 testbenches — confirms no functional
+side-effects.
+
+`tb_irq_aggregate.v` still uses the C2H pattern, but that's now a
+stylistic choice (cleanest way to wait on "ISR completed" rather
+than racing to spot a counter bump); the underlying hazard it was
+working around is gone.

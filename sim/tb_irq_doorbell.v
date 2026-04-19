@@ -2,16 +2,13 @@
 // tb_irq_doorbell — verifies the host → IOP doorbell IRQ path:
 //   APB write to host-side DOORBELL_H2C (byte 0x700, W1S) sets the
 //   doorbell bit, which is wired into iop_irq via attoio_ctrl.  The
-//   firmware's __isr W1Cs the bit (via IOP-view MMIO 0x780), records
-//   data in the mailbox, and pulses DOORBELL_C2H so the host can
-//   safely inspect the mailbox once the ISR is done.
+//   firmware's __isr W1Cs the bit (via IOP-view MMIO 0x780), reads a
+//   host-staged command word from mailbox[16], and echoes it.
 //
-// We deliberately wait on `irq_to_host` (driven by C2H) instead of
-// polling mailbox[0]: tight host APB polling of SRAM B during the
-// IOP's ISR can clobber the shared sram_b0_do0 latch (a known RTL
-// arbitration race), causing the IOP's mailbox loads to return wrong
-// values.  Real software using this hardware should follow the same
-// "IRQ-to-host then read" pattern.
+// This test deliberately polls mailbox[0] from the host side while
+// the ISR runs and reads SRAM B — exactly the access pattern that
+// surfaced BUG-001.  A clean PASS confirms the BUG-001 fix in
+// attoio_memmux.v (the b0/b1 Do0 capture latches) is working.
 /******************************************************************************/
 
 `timescale 1ns/1ps
@@ -61,10 +58,6 @@ module tb_irq_doorbell;
 
 `include "apb_host.vh"
 
-    /* (Earlier debug: probing u_dut.u_sram_b0.mem[*] and
-     * u_dut.sram_b0_do0 around an ISR load is what surfaced the SRAM B
-     * Do0 race documented in docs/known_bugs.md BUG-001.  See the
-     * commit history for the full instrumentation.) */
     task wait_for_mailbox(input [10:0] addr, input [31:0] expected,
                           input integer max_tries);
         integer tries;
@@ -83,29 +76,6 @@ module tb_irq_doorbell;
             $display("FAIL: mailbox @0x%03h never reached %08h (last=%08h)",
                      addr, expected, val);
             $fatal;
-        end
-    endtask
-
-    /* Wait for irq_to_host to assert (i.e. firmware raised C2H), then
-     * W1C-clear it on the host side so the next ring can re-arm.
-     * Done in clk-cycle terms (no APB poll) so we never touch SRAM B
-     * while the IOP is mid-ISR. */
-    task wait_for_irq_to_host(input integer max_cycles);
-        integer waited;
-        begin
-            waited = 0;
-            while (irq_to_host !== 1'b1 && waited < max_cycles) begin
-                @(posedge sysclk);
-                waited = waited + 1;
-            end
-            if (irq_to_host !== 1'b1) begin
-                $display("FAIL: irq_to_host never asserted (waited %0d sysclk)",
-                         waited);
-                $fatal;
-            end
-            $display("  irq_to_host asserted (waited %0d sysclk)", waited);
-            /* W1C-clear C2H from the host side (host word 1 = byte 0x704). */
-            apb_write(11'h704, 32'h00000001, 4'hF);
         end
     endtask
 
@@ -137,56 +107,48 @@ module tb_irq_doorbell;
         $display("  firmware armed MIE, now in WFI");
 
         // -------------------------------------------------------------
-        // Ring 1
+        // Ring 1 — host stages cmd, rings doorbell, polls count
         // -------------------------------------------------------------
         $display("--- Ring 1: stage cmd 0xCAFE0001, then write H2C=1 ---");
         apb_write(11'h640, 32'hCAFE0001, 4'hF);
-        repeat (50) @(posedge sysclk);
         apb_write(11'h700, 32'h00000001, 4'hF);
 
-        wait_for_irq_to_host(5000);
-        repeat (10) @(posedge sysclk);
+        /* Tight polling — exactly the BUG-001 reproducer pattern. */
+        wait_for_mailbox(11'h600, 32'h00000001, 5000);
 
-        apb_read(11'h600, rd);
-        if (rd !== 32'h00000001) begin
-            $display("FAIL: count = %08h (expected 1)", rd); $fatal;
-        end
         apb_read(11'h610, rd);
         if ((rd & 32'h1) !== 32'h1) begin
-            $display("FAIL: snapshot didn't see H2C bit (got %08h)", rd); $fatal;
+            $display("FAIL: snapshot didn't see H2C bit set (got %08h)", rd);
+            $fatal;
         end
         apb_read(11'h618, rd);
         if (rd !== 32'hCAFE0001) begin
-            $display("FAIL: cmd echo wrong (got %08h)", rd); $fatal;
+            $display("FAIL: cmd echo wrong (got %08h, expected cafe0001)", rd);
+            $fatal;
         end
         apb_read(11'h700, rd);
         if (rd[0] !== 1'b0) begin
-            $display("FAIL: H2C still set after ISR (got %08h)", rd); $fatal;
+            $display("FAIL: H2C still set after ISR (got %08h)", rd);
+            $fatal;
         end
-        $display("  PASS Ring 1: count=1, snapshot ok, cmd echoed, H2C cleared");
+        $display("  PASS Ring 1: count=1, snap ok, cmd echoed, H2C cleared");
 
         // -------------------------------------------------------------
-        // Ring 2
+        // Ring 2 — different cmd, same polling pattern
         // -------------------------------------------------------------
         $display("--- Ring 2: stage cmd 0xBEEF0002, then write H2C=1 ---");
         apb_write(11'h640, 32'hBEEF0002, 4'hF);
-        repeat (50) @(posedge sysclk);
         apb_write(11'h700, 32'h00000001, 4'hF);
 
-        wait_for_irq_to_host(5000);
-        repeat (10) @(posedge sysclk);
-
-        apb_read(11'h600, rd);
-        if (rd !== 32'h00000002) begin
-            $display("FAIL: count = %08h (expected 2)", rd); $fatal;
-        end
+        wait_for_mailbox(11'h600, 32'h00000002, 5000);
         apb_read(11'h618, rd);
         if (rd !== 32'hBEEF0002) begin
-            $display("FAIL: Ring 2 cmd echo wrong (got %08h)", rd); $fatal;
+            $display("FAIL: Ring 2 cmd echo wrong (got %08h)", rd);
+            $fatal;
         end
         $display("  PASS Ring 2: count=2, cmd echoed");
 
-        $display("PASS: DOORBELL_H2C drove iop_irq through both rings");
+        $display("PASS: DOORBELL_H2C drove iop_irq through both rings (BUG-001 fix verified)");
         $finish;
     end
 

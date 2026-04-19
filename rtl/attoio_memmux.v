@@ -212,13 +212,48 @@ module attoio_memmux (
                                            SRC_MMIO;
     end
 
+    /* ------------------------------------------------------------- */
+    /*  SRAM B Do0 capture latches (BUG-001 fix)                     */
+    /*                                                               */
+    /*  The DFFRAM Do0 outputs are single-buffered and shared with   */
+    /*  the host port.  Without these latches, a host APB read of    */
+    /*  SRAM B that lands on a sysclk edge between the core's read   */
+    /*  issuance (clk_iop edge T) and consumption (clk_iop edge T+1) */
+    /*  overwrites Do0 with the host's value, and the core silently  */
+    /*  reads the wrong data.                                        */
+    /*                                                               */
+    /*  We delay b_grant_core for each B-bank by one sysclk so the   */
+    /*  capture fires the cycle *after* the core won the bank — by   */
+    /*  then the SRAM has latched mem[core_addr] into Do0, and we    */
+    /*  snapshot it before any subsequent host access can clobber it.*/
+    /*  Cost: 64 flops + 2 enable flops; no critical path impact.    */
+    /* ------------------------------------------------------------- */
+    reg [31:0] core_b0_rdata_q, core_b1_rdata_q;
+    reg        core_b0_grant_q, core_b1_grant_q;
+
+    always @(posedge sysclk or negedge rst_n) begin
+        if (!rst_n) begin
+            core_b0_grant_q <= 1'b0;
+            core_b1_grant_q <= 1'b0;
+            core_b0_rdata_q <= 32'h0;
+            core_b1_rdata_q <= 32'h0;
+        end else begin
+            /* Remember whether the core just won this bank.  One
+             * sysclk later, the SRAM has latched mem[A0] into Do0. */
+            core_b0_grant_q <= b_grant_core & core_sel_b0;
+            core_b1_grant_q <= b_grant_core & core_sel_b1;
+            if (core_b0_grant_q) core_b0_rdata_q <= sram_b0_do0;
+            if (core_b1_grant_q) core_b1_rdata_q <= sram_b1_do0;
+        end
+    end
+
     always @(*) begin
         case (core_rd_src)
             SRC_A0:   core_rdata = sram_a0_do0;
             SRC_A1:   core_rdata = sram_a1_do0;
             SRC_A2:   core_rdata = sram_a2_do0;
-            SRC_B0:   core_rdata = sram_b0_do0;
-            SRC_B1:   core_rdata = sram_b1_do0;
+            SRC_B0:   core_rdata = core_b0_rdata_q;
+            SRC_B1:   core_rdata = core_b1_rdata_q;
             SRC_MMIO: core_rdata = mmio_rdata;
             default:  core_rdata = 32'h0;
         endcase
