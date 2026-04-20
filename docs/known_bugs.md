@@ -115,3 +115,61 @@ side-effects.
 stylistic choice (cleanest way to wait on "ISR completed" rather
 than racing to spot a counter bump); the underlying hazard it was
 working around is gone.
+
+---
+
+## BUG-002 — ISR stores to mailbox word 3+ dropped under specific instruction mix
+
+**Severity:** correctness; reproducible in E10 BLDC example.  Blocks
+any ISR that writes to mailbox words ≥ 3 *after* writing to mailbox
+words 0–1 *after* writing to MMIO (GPIO_OUT_SET).
+
+**Symptom.**  Encountered while building `sw/bldc6/main.c`
+(E10 BLDC 6-step).  The ISR pattern:
+
+```c
+GPIO_OUT_CLR = GATE_MASK;
+if (gate) GPIO_OUT_SET = gate;   // MMIO write, works (pads driven)
+comm_count++;
+MAILBOX_W32[0] = comm_count;     // SRAM B write, observed OK
+MAILBOX_W32[1] = idx;            // SRAM B write, observed OK
+MAILBOX_W32[3] = 0x240;          // HARDCODED constant — TB reads 0
+```
+
+- `pad_out[9:4]` correctly reflects the last `GPIO_OUT_SET` value.
+- `MAILBOX_W32[0]` and `MAILBOX_W32[1]` are correctly updated.
+- `MAILBOX_W32[3]` (and all later mailbox writes in the same ISR)
+  read back as either `0` or `X` (uninitialized) from the host side.
+- The effect persists even when the value stored is an `li`-immediate
+  (no register hazard), and even when loaded from a BSS global just
+  before the store.
+
+**What's been ruled out**
+- Not address decode: `apb_read(0x60C)` on any other FW lands the
+  expected value there.
+- Not register clobber / load-use hazard: hardcoded `li a5, 576;
+  sw a5, 1548(zero)` still produces 0.
+- Not the BUG-001 Do0 latch (already verified fixed by
+  `tb_irq_doorbell`).
+- Not specific to `a0`: tried `a5` (hardcoded) and spilled-to-stack
+  locals; same result.
+
+**Likely cause.**  Something about the AttoRV32 memory pipeline with
+`NRV_SERIAL_SHIFT` + `NRV_SINGLE_PORT_REGF` under back-to-back
+stores that cross a bank boundary (MMIO → SRAM A → SRAM B ×3).
+The core appears to drop or misroute late stores.  Needs isolation
+at the AttoRV32 level — likely to be reproduced by a minimal test
+without the macro around it.
+
+**Workaround.** None that recovers the pattern.  E10 BLDC was
+deferred pending investigation.  Other Tier-3 examples (E8 PWM,
+E9 stepper) don't exhibit the pattern (fewer late stores per ISR)
+and pass cleanly.
+
+**Status:** open.  Candidates for investigation:
+1. Minimal iverilog testbench on the AttoRV32 core alone,
+   reproducing the store sequence.
+2. VCD dump + walk through core FSM on the specific clk_iop
+   cycles where mailbox[3] store should commit.
+3. Try disabling `NRV_SERIAL_SHIFT` in a debug build — if the
+   issue goes away, the serial-shift FSM is the culprit.
