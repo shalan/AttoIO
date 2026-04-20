@@ -73,12 +73,12 @@ Plan: `docs/examples_plan.md` · each example links to its firmware
 
 ### Tier 4 — Audio
 
-| # | Example | Status | Commit |
+| # | Deliverable | Status | Notes |
 |---|---|---|---|
-| E12 | Tone / buzzer melody | ☐ | — |
-| E13 | 8-bit PWM-DAC music | ☐ | — |
-| E14 | PDM 1-bit DAC | ☐ | — |
-| E15 | PSG-style 3-voice synth | ☐ | — |
+| E12 | Tone / buzzer melody | ☑ | Phase E12 — `sw/tone_melody`. TIMER CMP0 pad-toggle + IRQ pacing. 4-note demo at 10/12/15/20 kHz, exactly 40 rising edges per note. Commit `42b1254`. |
+| E13 | 8-bit PWM-DAC music | ☑ | Phase E13 — `sw/pwm_dac`. Dual-compare soft-PWM (CMP0 period + CMP1 duty, ISR drives pad). 2048-cycle carrier, 8-sample triangle. 6 interior periods within ±32/2048 (1.6 %). Commit `afbdc27`. |
+| E14 | PDM 1-bit DAC | ☑ | Phase E14 — `sw/pdm_dac`. First-order sigma-delta at 100 kHz bit rate. Expected 159 HIGH pulses, measured 158. Commit `3c0cd7f`. |
+| E15 | PSG-style 3-voice synth | ☑ | Phase E15 — `sw/psg3`. 3 independent voice phase counters in one ISR, pads 8/9/10, pitches 5/10/25 kHz at 100 kHz sample rate. Exact edge counts (10/20/50). Commit pending. |
 
 ### Tier 5 — IR
 
