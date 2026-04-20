@@ -66,10 +66,10 @@ Plan: `docs/examples_plan.md` · each example links to its firmware
 
 | # | Example | Status | Commit |
 |---|---|---|---|
-| E8 | 4-ch PWM (RC servo / DC / LED fade) | ☐ | — |
-| E9 | Stepper driver (STEP/DIR w/ ramp) | ☐ | — |
-| E10 | BLDC 6-step w/ Hall sensors | ☐ | — |
-| E11 | Brushed DC closed-loop | ☐ | — |
+| E8 | 4-ch PWM (RC servo / DC / LED fade) | ☑ | Phase E8 — `sw/pwm4`, `sim/tb_pwm4.v`. Soft-PWM at 25/50/75/100 % duty, sampled HIGH counts within 1.1 % of expected. Commit `b9305fb`. |
+| E9 | Stepper driver (STEP/DIR w/ ramp) | ☑ | Phase E9 — `sw/stepper`, `sim/tb_stepper.v`. 30-step trapezoid (accel/cruise/decel), timestamped edges confirm monotonic profile. Commit `cb7a83e`. |
+| E10 | BLDC 6-step w/ Hall sensors | ☑ | Phase E10 — `sw/bldc6`, `sim/tb_bldc6.v`. Six-state commutation table advanced by per-pin WAKE edges; all 12 commutations across 2 revolutions PASS. Surfaced and retired **BUG-002** (was FW write-order race, not HW — see `docs/known_bugs.md`). |
+| E11 | Brushed DC closed-loop | ☑ | Phase E11 — see commit `9703357`. |
 
 ### Tier 4 — Audio
 
@@ -95,7 +95,7 @@ Plan: `docs/examples_plan.md` · each example links to its firmware
 | E19 | 4×4 matrix keypad scanner | ☐ | — |
 | E20 | Quadrature encoder + button | ☐ | — |
 | E21 | Capacitive touch (self-cap R-C timing) | ☐ | — |
-| E22 | Frequency / period counter | ☐ | — |
+| E22 | Frequency / period counter | ☑ | Phase E22 — `sw/freq_counter`, `sim/tb_freq_counter.v`. TIMER CAPTURE + CMP0 IRQ multi-source ISR. 10 kHz stimulus measured as 20 ± 2 edges / 2 ms gate across two consecutive windows. Commit `bcbf3f1`. |
 | E23 | Ultrasonic range finder (HC-SR04) | ☐ | — |
 | E24 | Rotary-dial phone decoder | ☐ | — |
 

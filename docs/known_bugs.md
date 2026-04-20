@@ -118,58 +118,72 @@ working around is gone.
 
 ---
 
-## BUG-002 — ISR stores to mailbox word 3+ dropped under specific instruction mix
+## BUG-002 — retired: **NOT a hardware bug** (firmware write-ordering race)
 
-**Severity:** correctness; reproducible in E10 BLDC example.  Blocks
-any ISR that writes to mailbox words ≥ 3 *after* writing to mailbox
-words 0–1 *after* writing to MMIO (GPIO_OUT_SET).
+**Status:** **retired 2026-04-20.**  Thorough isolation (see below)
+proved this was a firmware/testbench contract violation, not silicon.
+E10 BLDC (`sw/bldc6/main.c`, `sim/tb_bldc6.v`) now passes cleanly
+after a one-line FW reorder, with no RTL changes.  Full regression:
+**19/19 testbenches PASS.**
 
-**Symptom.**  Encountered while building `sw/bldc6/main.c`
-(E10 BLDC 6-step).  The ISR pattern:
+**Original symptom (as initially reported).**  While building E10
+BLDC, the ISR wrote `MAILBOX_W32[0] = comm_count; MAILBOX_W32[1] =
+idx; MAILBOX_W32[3] = gate;` — but the testbench read back the
+*previous* commutation's values for `mailbox[1]` and `mailbox[3]`.
+
+**Isolation ladder.**  Five progressively wider reproducers were
+built to localize the fault (all preserved in the tree under
+`sw/core_hazard*` + `sim/tb_{core,macro}_hazard*`).
+
+| # | Scope                                     | Result |
+|---|-------------------------------------------|--------|
+| 1 | AttoRV32 core alone, flat 2 KB memory      | all 5 mailbox stores fire with correct data (`sim/tb_core_hazard.v`) |
+| 2 | Full `attoio_macro`, linear `main()`, quiet host | all correct (`sim/tb_macro_hazard.v`) |
+| 3 | Full `attoio_macro`, linear `main()`, host polls mailbox[2] concurrently | all correct |
+| 4 | Full `attoio_macro`, doorbell-triggered `__isr`, quiet host | all correct (`sim/tb_macro_hazard_isr.v`) |
+| 5 | Full `attoio_macro`, doorbell-triggered `__isr`, concurrent polling | all correct |
+| 6 | Instrumented E10 reproducer with bus snoop at core↔memmux boundary | **bug reproduced — and captured the real cause** (`sim/tb_bldc6_snoop.v`) |
+
+Step 6 showed core stores and memmux SRAM-B writes are emitted
+correctly with the right addresses and data *every single time*.
+What fails is the testbench's read timing: the ISR writes
+`mailbox[0]` (count) *first*, then `mailbox[1]`, then `mailbox[3]`.
+The TB polls `mailbox[0]` as a "done" sentinel — so when it sees
+the count bump and immediately reads `mailbox[1]`, the ISR has not
+yet stored the idx.  The TB reads a stale value.
+
+**Why this looked like a store drop.**  With `NRV_SERIAL_SHIFT`
+loads and stores take ~200 sysclks each; between "mailbox[0]
+bumps" and "mailbox[1] actually commits" there's a ~200 ns window.
+The TB's APB read after `wait_for_at_least` fires inside that
+window.  On the *next* edge's check loop, the TB sees the (now
+committed) value of the *previous* edge — perfectly consistent
+with an off-by-one-edge pattern.
+
+**The fix.**  Write the payload BEFORE the sentinel.  Exactly the
+same rule already documented in `sw/irq_doorbell/main.c`:
 
 ```c
-GPIO_OUT_CLR = GATE_MASK;
-if (gate) GPIO_OUT_SET = gate;   // MMIO write, works (pads driven)
-comm_count++;
-MAILBOX_W32[0] = comm_count;     // SRAM B write, observed OK
-MAILBOX_W32[1] = idx;            // SRAM B write, observed OK
-MAILBOX_W32[3] = 0x240;          // HARDCODED constant — TB reads 0
+void __isr(void) {
+    /* ... */
+    MAILBOX_W32[1]  = idx;        /* payload */
+    MAILBOX_W32[3]  = gate;       /* payload */
+    WAKE_FLAGS      = flags;      /* MMIO W1C */
+    MAILBOX_W32[0]  = comm_count; /* sentinel — LAST */
+}
 ```
 
-- `pad_out[9:4]` correctly reflects the last `GPIO_OUT_SET` value.
-- `MAILBOX_W32[0]` and `MAILBOX_W32[1]` are correctly updated.
-- `MAILBOX_W32[3]` (and all later mailbox writes in the same ISR)
-  read back as either `0` or `X` (uninitialized) from the host side.
-- The effect persists even when the value stored is an `li`-immediate
-  (no register hazard), and even when loaded from a BSS global just
-  before the store.
+Once the FW publishes the count last, the TB's "wait for count
+bump → tight read" pattern is race-free.  No RTL change needed.
 
-**What's been ruled out**
-- Not address decode: `apb_read(0x60C)` on any other FW lands the
-  expected value there.
-- Not register clobber / load-use hazard: hardcoded `li a5, 576;
-  sw a5, 1548(zero)` still produces 0.
-- Not the BUG-001 Do0 latch (already verified fixed by
-  `tb_irq_doorbell`).
-- Not specific to `a0`: tried `a5` (hardcoded) and spilled-to-stack
-  locals; same result.
+**Artifacts kept for future regression.**  The five `tb_*_hazard*`
+testbenches stay in the tree (runnable via
+`sim/run_{core,macro}_hazard*.sh`) as canonical store-sequence
+probes.  They're not part of the default regression suite — they're
+diagnostic tools should a similar complaint ever arise again.
 
-**Likely cause.**  Something about the AttoRV32 memory pipeline with
-`NRV_SERIAL_SHIFT` + `NRV_SINGLE_PORT_REGF` under back-to-back
-stores that cross a bank boundary (MMIO → SRAM A → SRAM B ×3).
-The core appears to drop or misroute late stores.  Needs isolation
-at the AttoRV32 level — likely to be reproduced by a minimal test
-without the macro around it.
-
-**Workaround.** None that recovers the pattern.  E10 BLDC was
-deferred pending investigation.  Other Tier-3 examples (E8 PWM,
-E9 stepper) don't exhibit the pattern (fewer late stores per ISR)
-and pass cleanly.
-
-**Status:** open.  Candidates for investigation:
-1. Minimal iverilog testbench on the AttoRV32 core alone,
-   reproducing the store sequence.
-2. VCD dump + walk through core FSM on the specific clk_iop
-   cycles where mailbox[3] store should commit.
-3. Try disabling `NRV_SERIAL_SHIFT` in a debug build — if the
-   issue goes away, the serial-shift FSM is the culprit.
+**Lesson codified.**  All future ISRs that publish structured
+results through the mailbox must follow the rule: **write the
+count/sentinel last, all payload slots before it.**  The same
+rule already applies to host-to-IOP doorbell ISRs
+(`sw/irq_doorbell/main.c`, committed 2026-04-20 Phase 0.7 follow-on).
