@@ -28,12 +28,12 @@ can adopt a different "personality" per application without re-taping out.
 - **Core:** AttoRV32 RV32EC (single-port RF, shared adder, serial
   shift) — compact configuration, `ADDR_WIDTH = 11` (2 KB address
   space).
-- **Memory (1792 B total in five
-  [DFFRAM](https://github.com/shalan/sky130_gen_dffram) macros):**
-  - 3 × 128×32 (3 × 512 B = **1536 B** private SRAM A, 3-bank for
+- **Memory (1152 B total in three
+  [DFFRAM](https://github.com/shalan/sky130_gen_dffram) macros, Phase 0.8):**
+  - 2 × 128×32 (2 × 512 B = **1024 B** private SRAM A, 2-bank for
     reduced dynamic power) — code + data + stack
-  - 2 × 32×32 (2 × 128 B = 256 B shared mailbox, split for concurrent
-    host/IOP access)
+  - 1 × 32×32 (**128 B** shared mailbox, single bank, host-priority
+    arbitrated)
 - **Host interface:** AMBA **APB4 slave** (PADDR 11-bit, PWDATA/PRDATA
   32-bit, PSTRB byte-enables, PREADY wait-state).
 - **I/O:** 16 bidirectional pads, each with `in`, `out`, `out_en`, and
@@ -54,15 +54,15 @@ can adopt a different "personality" per application without re-taping out.
   - 16-bit watchdog (pet-on-write semantics, NMI + host alert on
     expire).
 
-### v2 memory map (11-bit PADDR / IOP address)
+### Memory map (11-bit PADDR / IOP address, Phase 0.8)
 
 | Range | Size | Contents |
 |---|---:|---|
 | `0x000 – 0x1FF` | 512 B | SRAM A bank 0 (RAM128) |
 | `0x200 – 0x3FF` | 512 B | SRAM A bank 1 (RAM128) |
-| `0x400 – 0x5FF` | 512 B | SRAM A bank 2 (RAM128) |
-| `0x600 – 0x67F` | 128 B | SRAM B0 (mailbox low) |
-| `0x680 – 0x6FF` | 128 B | SRAM B1 (mailbox high) |
+| `0x400 – 0x5FF` | — | *unmapped — reads return 0* |
+| `0x600 – 0x67F` | 128 B | SRAM B (mailbox, single bank) |
+| `0x680 – 0x6FF` | — | *unmapped* |
 | `0x700 – 0x7FF` | 256 B | MMIO page (GPIO, SPI, TIMER, WAKE, WDT, doorbells) |
 
 ## Repository layout
@@ -96,48 +96,134 @@ attoio/
 
 | Milestone | Status |
 |---|---|
-| Architecture spec (v2) | ✅ frozen |
+| Architecture spec (v2.1 — Phase 0.8 downsize) | ✅ frozen |
 | RTL: memmux, GPIO, ctrl, SPI, TIMER, WDT, APB IF, macro top | ✅ |
 | Firmware infrastructure (crt0, link.ld, attoio.h, Makefile) | ✅ |
-| Regression (8 testbenches) | ✅ all pass |
-| Example E1 (UART TX + RX echo) | ✅ |
-| Example E2 (SPI master) | ✅ |
-| Example E3 (I²C master + 24C02 EEPROM) | ✅ |
-| Yosys synthesis (sky130) | ✅ clean |
-| OpenSTA sign-off @ v1 map | ✅ clk_iop MET, ⚠ sysclk half-cycle CG path |
-| Re-synth/STA on v2 APB map | ⏳ pending |
-| Tier-2 examples (E4 WS2812, E5–E7 displays) | ⏳ planned |
-| PnR / tape-out flow | ⏳ pending |
+| **Regression (27 testbenches)** | ✅ all pass |
+| Tier-1 examples (UART TX/RX, SPI master, I²C master) | ✅ |
+| Tier-2 examples (WS2812, TM1637, HD44780, HT1621) | ✅ |
+| Tier-3 examples (4-ch PWM, stepper, BLDC, brushed DC) | ✅ |
+| Tier-4 examples (tone melody, PWM-DAC, PDM-DAC, PSG 3-voice) | ✅ |
+| Tier-5 examples (IR RX) | ◐ 1 of 3 |
+| Tier-6 examples (freq counter, cap touch, quad encoder) | ◐ 3 of 5 |
+| Tier-7 examples (1-Wire master) | ◐ 1 of 4 |
+| Yosys synthesis + OpenSTA (sky130) | ✅ **WNS +0.97 ns @ 75 MHz, 0.40 mm²** |
+| LibreLane 3.0.2 flow scaffolding | ◐ config + driver in `flow/librelane/`, first full PnR pending |
+| PnR / tape-out flow | ⏳ |
 
-## Testbenches (all passing)
+## Example firmwares
 
+All firmwares are stand-alone — one `main.c`, no shared code beyond
+`crt0.S` + `attoio.h`.  They're grouped by theme below.
+
+All measurements are `text + data + bss` from
+`riscv64-unknown-elf-size -d`, against the Phase 0.8 SRAM A budget
+of **1024 bytes**.
+
+### Tier 0 — Core / IRQ infrastructure
+
+| Example | FW size | Testbench | What it demonstrates |
+|---|---:|---|---|
+| `empty` | 90 B | `tb_fw_boot` | Smallest viable firmware — boots to `wfi` |
+| `timer_pwm` | 126 B | `tb_timer` | Hardware PWM via TIMER CMP0 pad-toggle |
+| `wake_test` | 204 B | `tb_wake` | Per-pin GPIO WAKE edge detection → IRQ |
+| `wdt_test` | 210 B | `tb_wdt` | 16-bit watchdog pet-on-write + NMI on expire |
+| `irq_timer` | 176 B | `tb_irq_timer` | TIMER CMP_IRQ_EN drives `iop_irq` cleanly |
+| `irq_doorbell` | 174 B | `tb_irq_doorbell` | Host → IOP doorbell IRQ (also verifies BUG-001 fix) |
+| `irq_aggregate` | 272 B | `tb_irq_aggregate` | Multi-source ISR dispatch (TIMER + WAKE together) |
+
+### Tier 1 — Bit-bang peripherals
+
+| Example | FW size | Testbench | What it demonstrates |
+|---|---:|---|---|
+| `uart_tx` | 240 B | `tb_uart` | UART TX bit-bang (decodes `"Hello, AttoIO\r\n"`) |
+| `uart_echo` | 326 B | `tb_uart_echo` | Full-duplex UART — RX sync + mid-bit sample + echo TX |
+| `spi_master` | 252 B | `tb_spi` | SPI master using the on-chip byte-shift accelerator |
+| `i2c_eeprom` | 654 B | `tb_i2c` | I²C master exercising a 24C02-style EEPROM model |
+
+### Tier 2 — Displays
+
+| Example | FW size | Testbench | What it demonstrates |
+|---|---:|---|---|
+| `ws2812` | 361 B | `tb_ws2812` | WS2812 3-LED frame via TIMER pad-toggle (partial demo) |
+| `tm1637` | 414 B | `tb_tm1637` | TM1637 4-digit 7-seg, "1234" at full brightness |
+| `hd44780` | 362 B | `tb_hd44780` | HD44780 LCD in 4-bit mode |
+| `ht1621` | 350 B | `tb_ht1621` | HT1621 segment LCD, 3-wire serial |
+
+### Tier 3 — Motor / power
+
+| Example | FW size | Testbench | What it demonstrates |
+|---|---:|---|---|
+| `pwm4` | 268 B | `tb_pwm4` | 4-channel IRQ-paced soft-PWM at 25 / 50 / 75 / 100 % duty |
+| `stepper` | 328 B | `tb_stepper` | STEP/DIR driver with 30-step trapezoidal velocity ramp |
+| `bldc6` | 320 B | `tb_bldc6` | BLDC 6-step commutation driven by 3 Hall-sensor wakes |
+| `dc_tacho` | 274 B | `tb_dc_tacho` | Brushed DC speed measurement via TIMER CAPTURE |
+
+### Tier 4 — Audio
+
+| Example | FW size | Testbench | What it demonstrates |
+|---|---:|---|---|
+| `tone_melody` | 280 B | `tb_tone_melody` | 4-note buzzer melody at 10/12/15/20 kHz |
+| `pwm_dac` | 380 B | `tb_pwm_dac` | 8-bit PWM DAC, soft dual-compare |
+| `pdm_dac` | 376 B | `tb_pdm_dac` | 1-bit PDM via first-order ΣΔ modulator |
+| `psg3` | 426 B | `tb_psg3` | PSG-style 3-voice square-wave synth |
+
+### Tier 5 — IR (partial)
+
+| Example | FW size | Testbench | What it demonstrates |
+|---|---:|---|---|
+| `ir_rx` | 366 B | `tb_ir_rx` | NEC 32-bit decoder using TIMER CAPTURE Δ-classification |
+
+### Tier 6 — Input / sensing (partial)
+
+| Example | FW size | Testbench | What it demonstrates |
+|---|---:|---|---|
+| `freq_counter` | 248 B | `tb_freq_counter` | Frequency counter — TIMER CAPTURE + MATCH multi-source ISR |
+| `cap_touch` | 232 B | `tb_cap_touch` | Self-capacitance touch via discharge/rise-time measurement |
+| `qenc` | 348 B | `tb_qenc` | Quadrature encoder + button, WAKE-driven with signed-LUT state machine |
+
+### Tier 7 — Legacy protocols (partial)
+
+| Example | FW size | Testbench | What it demonstrates |
+|---|---:|---|---|
+| `onewire` | 432 B | `tb_onewire` | Dallas 1-Wire master — reset/presence, byte I/O, DS18B20 scratchpad |
+
+### Headroom
+
+Largest firmware so far is `i2c_eeprom` at 654 B, leaving **306 B of
+SRAM A headroom** on top of the 64 B reserved stack — plenty of room
+for more complex future examples (IR TX + learning remote, PS/2
+keyboard/mouse, Modbus RTU, 1-wire with CRC tables, …).
+
+## Testbenches (27 passing)
+
+Every example above has a matching `sim/tb_*.v` testbench (plus
+`run_*.sh` driver).  Full regression:
+
+```bash
+for s in sim/run_*.sh; do bash "$s"; done
 ```
-tb_fw_boot      empty firmware loads and reaches WFI
-tb_timer        TIMER PWM pad toggle at 40-cycle period
-tb_wake         per-pin wake edge detection (3/3 scenarios)
-tb_wdt          watchdog pet + expire + host alert (5/5 checks)
-tb_spi          SPI master round-trip with slave model
-tb_uart         UART TX decodes "Hello, AttoIO\r\n" on pad_out[0]
-tb_uart_echo    UART RX → echo TX round-trip ("ABCD")
-tb_i2c          I²C master writes+random-reads a 24C02-style EEPROM
-```
 
-## Key numbers (pre-v2-resynth, sky130_fd_sc_hd, TT 1.80 V 25 °C)
+Four extra diagnostic testbenches (`tb_core_hazard`, `tb_macro_hazard`,
+`tb_macro_hazard_isr`, `tb_bldc6_snoop`) ship in the tree as cold-case
+probes for future store-sequence debugging.  They're not part of the
+default regression but are runnable standalone.
+
+## Key numbers (Phase 0.8, sky130_fd_sc_hd, TT 1.80 V 25 °C)
 
 | Metric | Value |
 |---|---|
-| Total cells (incl. all DFFRAMs) | **~55 k** (estimate after v2) |
-| Chip area | ≈ **0.58 mm²** (estimate after v2) |
-| SRAM share | ~88 % |
-| Glue/CPU share | ~12 % |
-| Private SRAM (SRAM A, 3 banks) | 1536 B |
-| Mailbox (SRAM B) | 256 B |
-| Setup WNS @ `clk_iop = 30 MHz` | +23 ns (v1) |
-| Setup WNS @ `sysclk = 75 MHz` | −0.15 ns (v1 — v2 retune pending) |
+| Total cells (incl. DFFRAMs, post-map) | **~31 k** |
+| Chip area | ≈ **0.40 mm²** (0.399 mm²) |
+| SRAM share | 82.7 % |
+| Glue/CPU share | 17.3 % |
+| Private SRAM (SRAM A, 2 × 128×32) | **1024 B** |
+| Mailbox (SRAM B, 1 × 32×32) | **128 B** |
+| Setup WNS @ `clk_iop = 30 MHz` | > +20 ns |
+| Setup WNS @ `sysclk = 75 MHz` | **+0.97 ns** (MET — was −0.15 ns before the Phase 0.8 downsize) |
 
-The v1 snapshot (25,509 cells, 0.27 mm², 33.9 mW) is captured in
-[`docs/synth_sta_report.md`](docs/synth_sta_report.md). A v2 refresh
-is pending.
+Full post-synth/STA breakdown — including the Phase 0.8 downsize
+delta — is in [`docs/synth_sta_report.md`](docs/synth_sta_report.md).
 
 ## Running the flow
 
