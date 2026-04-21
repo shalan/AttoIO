@@ -101,7 +101,7 @@ module tb_ws2812;
     // -----------------------------------------------------------------
     // Firmware loader + checker
     // -----------------------------------------------------------------
-    reg [31:0] fw_image [0:255];
+    reg [31:0] fw_image [0:127];
     integer i;
     reg [31:0] rd;
 
@@ -139,7 +139,7 @@ module tb_ws2812;
         frame[3] = 8'h00; frame[4] = 8'hFF; frame[5] = 8'h00;
         frame[6] = 8'h00; frame[7] = 8'h00; frame[8] = 8'hFF;
 
-        for (i = 0; i < 256; i = i + 1) fw_image[i] = 32'h00000013;
+        for (i = 0; i < 128; i = i + 1) fw_image[i] = 32'h00000013;
         $readmemh(`FW_HEX, fw_image);
 
         PADDR = 0; PWDATA = 0; PSTRB = 0;
@@ -149,7 +149,7 @@ module tb_ws2812;
         repeat (5) @(posedge sysclk);
 
         $display("--- tb_ws2812: loading firmware ---");
-        for (i = 0; i < 256; i = i + 1)
+        for (i = 0; i < 128; i = i + 1)
             apb_write(i * 4, fw_image[i], 4'hF);
 
         $display("--- releasing IOP reset ---");

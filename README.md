@@ -28,10 +28,9 @@ can adopt a different "personality" per application without re-taping out.
 - **Core:** AttoRV32 RV32EC (single-port RF, shared adder, serial
   shift) — compact configuration, `ADDR_WIDTH = 11` (2 KB address
   space).
-- **Memory (1152 B total in three
-  [DFFRAM](https://github.com/shalan/sky130_gen_dffram) macros, Phase 0.8):**
-  - 2 × 128×32 (2 × 512 B = **1024 B** private SRAM A, 2-bank for
-    reduced dynamic power) — code + data + stack
+- **Memory (640 B total in two
+  [DFFRAM](https://github.com/shalan/sky130_gen_dffram) macros, Phase 0.9):**
+  - 1 × 128×32 (**512 B** private SRAM A, single bank) — code + data + stack
   - 1 × 32×32 (**128 B** shared mailbox, single bank, host-priority
     arbitrated)
 - **Host interface:** AMBA **APB4 slave** (PADDR 11-bit, PWDATA/PRDATA
@@ -54,14 +53,13 @@ can adopt a different "personality" per application without re-taping out.
   - 16-bit watchdog (pet-on-write semantics, NMI + host alert on
     expire).
 
-### Memory map (11-bit PADDR / IOP address, Phase 0.8)
+### Memory map (11-bit PADDR / IOP address, Phase 0.9)
 
 | Range | Size | Contents |
 |---|---:|---|
-| `0x000 – 0x1FF` | 512 B | SRAM A bank 0 (RAM128) |
-| `0x200 – 0x3FF` | 512 B | SRAM A bank 1 (RAM128) |
-| `0x400 – 0x5FF` | — | *unmapped — reads return 0* |
-| `0x600 – 0x67F` | 128 B | SRAM B (mailbox, single bank) |
+| `0x000 – 0x1FF` | 512 B | SRAM A (private, RAM128, single bank) |
+| `0x200 – 0x5FF` | — | *unmapped — reads return 0* |
+| `0x600 – 0x67F` | 128 B | SRAM B (mailbox, RAM32) |
 | `0x680 – 0x6FF` | — | *unmapped* |
 | `0x700 – 0x7FF` | 256 B | MMIO page (GPIO, SPI, TIMER, WAKE, WDT, doorbells) |
 
@@ -96,10 +94,10 @@ attoio/
 
 | Milestone | Status |
 |---|---|
-| Architecture spec (v2.1 — Phase 0.8 downsize) | ✅ frozen |
+| Architecture spec (v2.2 — Phase 0.9 downsize) | ✅ frozen |
 | RTL: memmux, GPIO, ctrl, SPI, TIMER, WDT, APB IF, macro top | ✅ |
 | Firmware infrastructure (crt0, link.ld, attoio.h, Makefile) | ✅ |
-| **Regression (27 testbenches)** | ✅ all pass |
+| **Regression (28 testbenches)** | ✅ all pass |
 | Tier-1 examples (UART TX/RX, SPI master, I²C master) | ✅ |
 | Tier-2 examples (WS2812, TM1637, HD44780, HT1621) | ✅ |
 | Tier-3 examples (4-ch PWM, stepper, BLDC, brushed DC) | ✅ |
@@ -107,7 +105,7 @@ attoio/
 | Tier-5 examples (IR RX, IR TX, learning remote) | ✅ |
 | Tier-6 examples (freq counter, cap touch, quad encoder) | ◐ 3 of 5 |
 | Tier-7 examples (1-Wire master) | ◐ 1 of 4 |
-| Yosys synthesis + OpenSTA (sky130) | ✅ **WNS +0.97 ns @ 75 MHz, 0.40 mm²** |
+| Yosys synthesis + OpenSTA (sky130) | ✅ **WNS +1.25 ns @ 75 MHz, 0.25 mm²** |
 | LibreLane 3.0.2 flow scaffolding | ◐ config + driver in `flow/librelane/`, first full PnR pending |
 | PnR / tape-out flow | ⏳ |
 
@@ -117,8 +115,11 @@ All firmwares are stand-alone — one `main.c`, no shared code beyond
 `crt0.S` + `attoio.h`.  They're grouped by theme below.
 
 All measurements are `text + data + bss` from
-`riscv64-unknown-elf-size -d`, against the Phase 0.8 SRAM A budget
-of **1024 bytes**.
+`riscv64-unknown-elf-size -d`, against the Phase 0.9 SRAM A budget
+of **512 bytes** (with 64 B reserved for stack → 448 B usable for
+text + data + bss).  One historical example (`i2c_eeprom`, 584 B)
+exceeds this budget and is excluded from the default regression
+sweep — see notes at the end of this section.
 
 ### Tier 0 — Core / IRQ infrastructure
 
@@ -139,7 +140,7 @@ of **1024 bytes**.
 | `uart_tx` | 240 B | `tb_uart` | UART TX bit-bang (decodes `"Hello, AttoIO\r\n"`) |
 | `uart_echo` | 326 B | `tb_uart_echo` | Full-duplex UART — RX sync + mid-bit sample + echo TX |
 | `spi_master` | 252 B | `tb_spi` | SPI master using the on-chip byte-shift accelerator |
-| `i2c_eeprom` | 654 B | `tb_i2c` | I²C master exercising a 24C02-style EEPROM model |
+| `i2c_eeprom` | 584 B | `tb_i2c` | I²C master exercising a 24C02-style EEPROM model — **does not fit in Phase 0.9's 512 B SRAM A; archival only, excluded from default regression** |
 
 ### Tier 2 — Displays
 
@@ -174,7 +175,7 @@ of **1024 bytes**.
 |---|---:|---|---|
 | `ir_rx` | 366 B | `tb_ir_rx` | NEC 32-bit decoder using TIMER CAPTURE Δ-classification |
 | `ir_tx` | 306 B | `tb_ir_tx` | NEC 32-bit envelope transmitter, absolute-time edge scheduling |
-| `ir_learn` | 468 B | `tb_ir_learn` | Universal learning remote — capture N edges, replay the waveform |
+| `ir_learn` | 416 B | `tb_ir_learn` | Universal learning remote — capture N edges, replay the waveform |
 
 ### Tier 6 — Input / sensing (partial)
 
@@ -192,12 +193,20 @@ of **1024 bytes**.
 
 ### Headroom
 
-Largest firmware so far is `i2c_eeprom` at 654 B, leaving **306 B of
-SRAM A headroom** on top of the 64 B reserved stack — plenty of room
-for more complex future examples (IR TX + learning remote, PS/2
-keyboard/mouse, Modbus RTU, 1-wire with CRC tables, …).
+Largest currently-fitting firmware is `onewire` at 432 B, leaving
+**16 B headroom** under the 448 B effective code budget (512 B SRAM A
+minus 64 B reserved stack).  Tighter than Phase 0.8's 306 B, but
+real — most peripheral demos cluster around 200-400 B.  If a future
+demo needs more code space, the RTL can be reverted to a 1024 B
+SRAM A by re-adding `u_sram_a1` + the second-bank case in memmux
+(Phase 0.8 layout).
 
-## Testbenches (29 passing)
+The `i2c_eeprom` example (584 B) sits above the budget and is kept
+as archival only — its source is in-tree and `tb_i2c.v` works
+against it under the Phase 0.8 1024 B layout, but it is **excluded
+from the default 28-test regression sweep**.
+
+## Testbenches (28 passing)
 
 Every example above has a matching `sim/tb_*.v` testbench (plus
 `run_*.sh` driver).  Full regression:
@@ -211,21 +220,27 @@ Four extra diagnostic testbenches (`tb_core_hazard`, `tb_macro_hazard`,
 probes for future store-sequence debugging.  They're not part of the
 default regression but are runnable standalone.
 
-## Key numbers (Phase 0.8, sky130_fd_sc_hd, TT 1.80 V 25 °C)
+## Key numbers (Phase 0.9, sky130_fd_sc_hd, TT 1.80 V 25 °C)
 
 | Metric | Value |
 |---|---|
-| Total cells (incl. DFFRAMs, post-map) | **~31 k** |
-| Chip area | ≈ **0.40 mm²** (0.399 mm²) |
-| SRAM share | 82.7 % |
-| Glue/CPU share | 17.3 % |
-| Private SRAM (SRAM A, 2 × 128×32) | **1024 B** |
+| Chip area | ≈ **0.25 mm²** (250,918 µm²) |
+| Private SRAM (SRAM A, 1 × 128×32) | **512 B** |
 | Mailbox (SRAM B, 1 × 32×32) | **128 B** |
+| Power @ 10 % activity | **38.2 mW** (down from 73.3 mW @ Phase 0.8) |
 | Setup WNS @ `clk_iop = 30 MHz` | > +20 ns |
-| Setup WNS @ `sysclk = 75 MHz` | **+0.97 ns** (MET — was −0.15 ns before the Phase 0.8 downsize) |
+| Setup WNS @ `sysclk = 75 MHz` | **+1.25 ns** (MET — was +0.97 in Phase 0.8) |
 
-Full post-synth/STA breakdown — including the Phase 0.8 downsize
-delta — is in [`docs/synth_sta_report.md`](docs/synth_sta_report.md).
+Phase progression so far:
+
+| Phase | DFFRAMs | SRAM total | Chip area | Setup WNS @ 75 MHz |
+|---|---|---|---|---|
+| 0.6 (initial) | 5 | 1792 B | ≈ 0.56 mm² | −0.15 ns ❌ |
+| **0.8** | 3 | 1152 B | ≈ 0.40 mm² | +0.97 ns ✅ |
+| **0.9** | **2** | **640 B** | **≈ 0.25 mm²** | **+1.25 ns ✅** |
+
+Full post-synth/STA breakdown is in
+[`docs/synth_sta_report.md`](docs/synth_sta_report.md).
 
 ## Running the flow
 

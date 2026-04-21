@@ -101,19 +101,20 @@ on a different "personality" per application without re-taping-out.
 
 ## 4. Physical memory
 
-Total SRAM: **1152 bytes** in three
-[DFFRAM](https://github.com/shalan/sky130_gen_dffram) macros (Phase 0.8
-layout — was 1792 B across five macros before the downsize).
+Total SRAM: **640 bytes** in two
+[DFFRAM](https://github.com/shalan/sky130_gen_dffram) macros (Phase 0.9
+layout — successor to Phase 0.8's 1152 B / 3-macro layout).
 
 | Macro | DFFRAM config | Size | Module | Contents |
 |---|---|---:|---|---|
-| **SRAM A0** | 128×32 | 512 B | `DFFRAM #(.WORDS(128), .WSIZE(4))` | Code/data/stack low half (`0x000–0x1FF`) |
-| **SRAM A1** | 128×32 | 512 B | `DFFRAM #(.WORDS(128), .WSIZE(4))` | Code/data/stack high half (`0x200–0x3FF`) |
-| **SRAM B**  | 32×32  | 128 B | `DFFRAM #(.WORDS(32), .WSIZE(4))`  | Mailbox (`0x600–0x67F`), host + IOP shared |
+| **SRAM A** | 128×32 | 512 B | `DFFRAM #(.WORDS(128), .WSIZE(4))` | Code/data/stack (`0x000–0x1FF`) |
+| **SRAM B** | 32×32  | 128 B | `DFFRAM #(.WORDS(32), .WSIZE(4))`  | Mailbox (`0x600–0x67F`), host + IOP shared |
 
-All three are single-port, single-clock. The A0/A1 split is invisible
-to firmware — `sw/link.ld` sees one contiguous 1024 B region.  The
-mailbox is a single 128 B bank with host-priority arbitration.
+Both are single-port, single-clock.  All current example firmwares
+fit in 512 B SRAM A *except* the historical `i2c_eeprom` (584 B); it
+remains in-tree as archival but is excluded from the default
+regression sweep — anyone needing it can revert to the Phase 0.8
+1024 B layout.
 
 ### 4.1 DFFRAM port interface
 
@@ -160,27 +161,26 @@ to access concurrently. That situation exists only for the mailbox.
 ## 5. Memory map (IOP view)
 
 Total address space: 2 KiB (`ADDR_WIDTH = 11`).  The decoded regions
-cover 1024 + 128 + 256 = 1408 B; the rest returns 0 on read and drops
+cover 512 + 128 + 256 = 896 B; the rest returns 0 on read and drops
 writes silently.
 
 | Range | Size | Maps to | Notes |
 |---|---:|---|---|
-| `0x000 – 0x3FF` | 1024 B | SRAM A (private) | Reset vector at `0x000`, ISR at `MTVEC_ADDR = 0x010` |
-| `0x400 – 0x5FF` |  — | *unmapped* | reads return 0, writes dropped |
-| `0x600 – 0x67F` | 128 B | SRAM B (mailbox) | shared with host (host-priority arbiter) |
+| `0x000 – 0x1FF` |  512 B | SRAM A (private) | Reset vector at `0x000`, ISR at `MTVEC_ADDR = 0x010` |
+| `0x200 – 0x5FF` |  — | *unmapped* | reads return 0, writes dropped |
+| `0x600 – 0x67F` |  128 B | SRAM B (mailbox) | shared with host (host-priority arbiter) |
 | `0x680 – 0x6FF` |  — | *unmapped* | reads return 0, writes dropped |
-| `0x700 – 0x7FF` | 256 B | MMIO page | GPIO, PADCTL, doorbells, SPI, TIMER, WDT, IOP_CTRL |
+| `0x700 – 0x7FF` |  256 B | MMIO page | GPIO, PADCTL, doorbells, SPI, TIMER, WDT, IOP_CTRL |
 
 ### 5.1 Address decode
 
 ```
-addr[10]     = 0      →  SRAM A           A0 = addr[8:2]   (7-bit, 128 words per bank)
-                         addr[9] picks A0 (0x000–0x1FF) vs A1 (0x200–0x3FF) — transparent
+addr[10:9]   = 00     →  SRAM A           A0 = addr[8:2]   (7-bit, 128 words)
 addr[10:7]   = 1100   →  SRAM B (mailbox) A0 = addr[6:2]   (5-bit, 32 words)
 addr[10:8]   = 111    →  MMIO page        decoded by addr[7:2]
 ```
 
-### 5.2 SRAM A layout (IOP-private, 1024 B)
+### 5.2 SRAM A layout (IOP-private, 512 B)
 
 ```
 0x000           .reset      reset trampoline (≤ 16 B)
@@ -190,15 +190,17 @@ addr[10:8]   = 111    →  MMIO page        decoded by addr[7:2]
  ...            .data       initialized data
  ...            .bss        zero-initialized data
  ...
-0x3FF           stack top   stack grows down (64 B reserved by link.ld)
+0x1FF           stack top   stack grows down (64 B reserved by link.ld)
 ```
 
-**Code budget:** all 14 current example firmwares fit, the largest
-(`i2c_eeprom`) at 654 B.  With the 64 B stack reservation that leaves
-~306 B of headroom for future examples.  If a future demo exceeds
-that, the link script / RTL can be bumped back up to the v2 1536 B
-layout with minimal churn (one extra RAM128 instance, one `core_sel_a2`
-case in memmux).
+**Code budget:** 28 of the 30 example firmwares fit; the largest
+(`onewire`) lands at 432 B with 16 B of headroom over the 64 B stack
+reservation.  Two outliers — `i2c_eeprom` (584 B) and the original
+larger `ir_learn` — historically required Phase 0.8's 1024 B layout;
+`ir_learn` was trimmed to fit, `i2c_eeprom` is kept in-tree as
+archival but excluded from default regression.  If a future demo
+needs more code space, the RTL can be reverted to a 1024 B SRAM A by
+re-adding `u_sram_a1` + the second-bank case in memmux.
 
 ### 5.3 SRAM B layout (mailbox, 128 B)
 
@@ -220,7 +222,7 @@ space 1:1, plus a 3-word IOP_CTRL window:
 
 | Address | Size | Contents | Access |
 |---|---:|---|---|
-| `0x000 – 0x3FF` | 1024 B | SRAM A (private) | RW only while `IOP_CTRL.reset = 1` |
+| `0x000 – 0x1FF` |  512 B | SRAM A (private) | RW only while `IOP_CTRL.reset = 1` |
 | `0x600 – 0x67F` | 128 B | SRAM B (mailbox) | RW always (host-priority arbitrated) |
 | `0x700` | 4 B | `DOORBELL_H2C` | W1S (host sets, IOP clears) |
 | `0x704` | 4 B | `DOORBELL_C2H` | R / W1C (IOP sets, host clears) |

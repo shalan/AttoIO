@@ -43,38 +43,38 @@ hard macro with the **full DFFRAM netlists** flattened in.
   `sky130_fd_sc_hd__clkbuf_8` on clocks.
 - Output load: 17.5 fF (fF unit via `set_cmd_units -capacitance fF`).
 
-## Area / cell count (post-map, Phase 0.8)
+## Area / cell count (post-map, Phase 0.9)
 
-| Module              | Instances | Cells / inst | Area (µm²) / inst | Total area (µm²) |
-|---------------------|-----------|-------------:|------------------:|-----------------:|
-| `RAM128` (512 B)    | 2         | 13,815       | 146,796           | 293,592          |
-| `RAM32`  (128 B)    | 1         |  3,418       |  36,228           |  36,228          |
-| `attoio_macro` glue | 1         |  6,658       |  68,778           |  68,778          |
-| **Chip (top)**      |           |              |                   | **398,599** (≈ 0.399 mm²) |
+| Module              | Instances | Area (µm²) / inst | Total area (µm²) |
+|---------------------|-----------|------------------:|-----------------:|
+| `RAM128` (512 B)    | 1         | 146,796           | 146,796          |
+| `RAM32`  (128 B)    | 1         |  36,228           |  36,228          |
+| `attoio_macro` glue | 1         |  67,894           |  67,894          |
+| **Chip (top)**      |           |                   | **250,918** (≈ 0.251 mm²) |
 
-SRAM share: **82.7 %** of macro area.
-Glue / CPU share: 17.3 %.
+SRAM share: **72.9 %** of macro area.
+Glue / CPU share: 27.1 %.
 
-Phase 0.8 comparison (vs Phase 0.7 / 0.6 layout with 3× RAM128 + 2× RAM32):
+Phase progression:
 
-| Metric         | Phase 0.7 (computed) | **Phase 0.8** | Δ      |
-|----------------|---------------------:|--------------:|-------:|
-| RAM banks      | 3 + 2 = 5            | **2 + 1 = 3** | −2     |
-| Chip area      | ~562,996 µm² (≈0.56 mm²) | **398,599 µm² (≈0.40 mm²)** | **−29 %** |
-| Setup WNS      | −0.15 ns (VIOLATED)  | **+0.97 ns (MET)** | +1.12 ns |
+| Metric            | Phase 0.7 (3+2)  | Phase 0.8 (2+1)  | **Phase 0.9 (1+1)**       |
+|-------------------|-----------------:|-----------------:|--------------------------:|
+| DFFRAMs           | 5                | 3                | **2**                     |
+| Chip area         | ≈ 0.56 mm²       | ≈ 0.40 mm²       | **≈ 0.251 mm²**           |
+| Δ from previous   | —                | −29 %            | **−37 %**                 |
+| Setup WNS @ 75 MHz| −0.15 ns ❌      | +0.97 ns ✅      | **+1.25 ns ✅**           |
+| Power @ 10 % act. | 33.9 mW (Yosys hyped) | 73.3 mW          | **38.2 mW**               |
 
 ## Timing
 
-| Path group          | Setup WNS | Hold WNS | Verdict |
-|---------------------|----------:|---------:|---------|
-| `sysclk`  (75 MHz)  | **+0.97 ns** | +0.23 ns | **MET** |
-| `clk_iop` (30 MHz)  | > +20 ns   | +0.20 ns | MET     |
+| Path group          | Setup WNS    | Hold WNS  | Verdict |
+|---------------------|-------------:|----------:|---------|
+| `sysclk`  (75 MHz)  | **+1.25 ns** | +0.23 ns  | **MET** |
+| `clk_iop` (30 MHz)  | > +20 ns     | +0.20 ns  | MET     |
 
-The sysclk half-cycle clock-gating-check path that was marginal in
-Phase 0.7 (−0.15 ns to the DFFRAM's latch-based CG) cleared by ~1.1 ns
-after the downsize — removing one SRAM A bank and one SRAM B bank
-shortens memmux's decode + enable tree enough to eliminate the
-violation.
+The Phase 0.9 downsize bought another ~280 ps of setup margin on
+sysclk vs Phase 0.8 — the further-shortened memmux decode + enable
+tree (single-bank SRAM A → no `core_sel_a0/a1` mux) is the source.
 
 ### Critical path (sysclk, violating)
 
@@ -100,27 +100,18 @@ delay leaves only ~2.7 ns of internal decode budget.
 3. Add a host-bus input register inside the macro (costs 1 cycle of
    latency but decouples the CG check).
 
-## Power (default 10 % switching activity, Phase 0.8)
+## Power (default 10 % switching activity, Phase 0.9)
 
-| Group         | Internal | Switching | Leakage | Total   | %      |
-|---------------|---------:|----------:|--------:|--------:|-------:|
-| Sequential    | 13.6 mW  | 1.51 mW   | 92 nW   | 15.1 mW | 20.6 % |
-| Combinational | 12.1 mW  | 40.2 mW   | 62 nW   | 52.3 mW | 71.3 % |
-| Clock network | 3.84 mW  | 2.10 mW   | 21 nW   | 5.94 mW |  8.1 % |
-| **Total**     | 29.5 mW  | 43.8 mW   | 175 nW  | **73.3 mW** | 100 % |
+| Group         | Total       | %      |
+|---------------|------------:|-------:|
+| Sequential    |  ~7 mW      | ~18 %  |
+| Combinational | ~28 mW      | ~73 %  |
+| Clock network | ~3 mW       | ~8 %   |
+| **Total**     | **38.2 mW** | 100 %  |
 
 Upper-bound estimate — real workloads (idle host bus, bit-bang loops)
-typically land 3–5× lower.
-
-**Note on the Phase 0.8 jump** (33.9 mW → 73.3 mW).  The macro has
-fewer cells and smaller area, but the reported standalone-STA power
-roughly doubled.  Most likely cause: ABC was given more setup slack
-(WNS went from −0.15 ns to +0.97 ns) and chose higher-drive cells
-under the same `-D 13333` target.  The pre-PnR power number is an
-upper bound and tends to shift with any change in cell mix; the
-PnR-based estimate from LibreLane (Phase H11) is what the tape-out
-story relies on.  Worth a follow-up pass with explicit area-oriented
-ABC options if we want a tighter pre-PnR figure.
+typically land 3–5× lower.  Down ~48 % from Phase 0.8's 73.3 mW —
+the dropped RAM128 bank accounts for the bulk of the savings.
 
 ## Files
 

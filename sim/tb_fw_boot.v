@@ -59,7 +59,7 @@ module tb_fw_boot;
 
 `include "apb_host.vh"
 
-    reg [31:0] fw_image [0:255];      // 1024 B / 4 = 256 words
+    reg [31:0] fw_image [0:127];      // 512 B / 4 = 128 words
     integer    i;
     reg [31:0] rd;
 
@@ -67,7 +67,7 @@ module tb_fw_boot;
         $dumpfile("tb_fw_boot.vcd");
         $dumpvars(0, tb_fw_boot);
 
-        for (i = 0; i < 256; i = i + 1) fw_image[i] = 32'h00000013;
+        for (i = 0; i < 128; i = i + 1) fw_image[i] = 32'h00000013;
         $readmemh(`FW_HEX, fw_image);
 
         $display("--- tb_fw_boot: loading firmware from %s ---", `FW_HEX);
@@ -78,7 +78,7 @@ module tb_fw_boot;
         rst_n = 1;
         repeat (5) @(posedge sysclk);
 
-        for (i = 0; i < 256; i = i + 1)
+        for (i = 0; i < 128; i = i + 1)
             apb_write(i * 4, fw_image[i], 4'hF);
 
         for (i = 0; i < 8; i = i + 1) begin

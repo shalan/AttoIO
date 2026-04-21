@@ -94,7 +94,7 @@ module tb_stepper;
         prev_step <= pad_out[8];
     end
 
-    reg [31:0] fw_image [0:255];
+    reg [31:0] fw_image [0:127];
     integer i;
     integer ival;
     integer min_ival, max_ival;
@@ -104,7 +104,7 @@ module tb_stepper;
         $dumpfile("tb_stepper.vcd");
         $dumpvars(0, tb_stepper);
 
-        for (i = 0; i < 256; i = i + 1) fw_image[i] = 32'h00000013;
+        for (i = 0; i < 128; i = i + 1) fw_image[i] = 32'h00000013;
         $readmemh(`FW_HEX, fw_image);
 
         PADDR = 0; PWDATA = 0; PSTRB = 0;
@@ -114,7 +114,7 @@ module tb_stepper;
         repeat (5) @(posedge sysclk);
 
         $display("--- tb_stepper: loading firmware ---");
-        for (i = 0; i < 256; i = i + 1)
+        for (i = 0; i < 128; i = i + 1)
             apb_write(i * 4, fw_image[i], 4'hF);
 
         $display("--- releasing IOP reset ---");

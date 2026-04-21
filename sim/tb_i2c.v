@@ -109,7 +109,7 @@ module tb_i2c;
         end
     endtask
 
-    reg [31:0] fw_image [0:255];
+    reg [31:0] fw_image [0:127];
     integer i;
     reg [31:0] rd;
     reg [7:0]  expected [0:3];
@@ -118,7 +118,7 @@ module tb_i2c;
         $dumpfile("tb_i2c.vcd");
         $dumpvars(0, tb_i2c);
 
-        for (i = 0; i < 256; i = i + 1) fw_image[i] = 32'h00000013;
+        for (i = 0; i < 128; i = i + 1) fw_image[i] = 32'h00000013;
         $readmemh(`FW_HEX, fw_image);
 
         PADDR = 0; PWDATA = 0; PSTRB = 0;
@@ -128,14 +128,17 @@ module tb_i2c;
         repeat (5) @(posedge sysclk);
 
         $display("--- tb_i2c: loading firmware ---");
-        for (i = 0; i < 256; i = i + 1)
+        for (i = 0; i < 128; i = i + 1)
             apb_write(i * 4, fw_image[i], 4'hF);
 
         $display("--- releasing IOP reset ---");
         apb_write(11'h708, 32'h0, 4'hF);
 
-        /* 4 bytes write + 4 bytes read + overhead at 100 kHz @ 4 qtr
-         * delays/bit ≈ few ms wall-time.  Generous timeout. */
+        /* Phase 0.9 FW uses a 3-phase write / set-address / read (no
+         * restart needed) — same 4-byte round-trip coverage.  NOTE:
+         * this example does not fit in Phase 0.9's 512 B SRAM A
+         * budget and is excluded from default regression; it's kept
+         * as archival for anyone running a larger-RAM variant. */
         wait_for_mailbox(11'h600, 32'hE2E2E2E2, 500000);
         $display("  firmware signalled 'I2C done'");
 
@@ -151,9 +154,9 @@ module tb_i2c;
         end
         $display("  PASS: EEPROM memory matches master writes (5A A5 DE AD)");
 
-        /* Cross-check master readback via mailbox word @ 0x210 (bytes 16..19). */
+        /* Cross-check master readback via mailbox word @ 0x610 (bytes 16..19). */
         apb_read(11'h610, rd);
-        for (i = 0; i < 4; i = i + 1) begin
+        for (i = 0; i < 4; i = i + 1) begin : readcheck
             reg [7:0] got;
             got = rd[i*8 +: 8];
             if (got !== expected[i]) begin

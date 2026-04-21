@@ -106,13 +106,10 @@ module attoio_macro (
     wire [10:0] core_pc_out;    /* ADDR_WIDTH = 11 */
 
     /* SRAM A banks */
-    wire [6:0]  sram_a0_a0;  wire [31:0] sram_a0_di0;
-    wire [3:0]  sram_a0_we0; wire        sram_a0_en0;
-    wire [31:0] sram_a0_do0;
-
-    wire [6:0]  sram_a1_a0;  wire [31:0] sram_a1_di0;
-    wire [3:0]  sram_a1_we0; wire        sram_a1_en0;
-    wire [31:0] sram_a1_do0;
+    /* SRAM A (private, 512 B) */
+    wire [6:0]  sram_a_a0;  wire [31:0] sram_a_di0;
+    wire [3:0]  sram_a_we0; wire        sram_a_en0;
+    wire [31:0] sram_a_do0;
 
     /* SRAM B (mailbox, 128 B) */
     wire [4:0]  sram_b_a0;  wire [31:0] sram_b_di0;
@@ -189,21 +186,13 @@ module attoio_macro (
     // ====================================================================
     // SRAM A — three 128x32 DFFRAM banks (sysclk)
     // ====================================================================
-    DFFRAM #(.WORDS(128), .WSIZE(4)) u_sram_a0 (
+    DFFRAM #(.WORDS(128), .WSIZE(4)) u_sram_a (
         .CLK (sysclk),
-        .WE0 (sram_a0_we0),
-        .EN0 (sram_a0_en0),
-        .A0  (sram_a0_a0),
-        .Di0 (sram_a0_di0),
-        .Do0 (sram_a0_do0)
-    );
-    DFFRAM #(.WORDS(128), .WSIZE(4)) u_sram_a1 (
-        .CLK (sysclk),
-        .WE0 (sram_a1_we0),
-        .EN0 (sram_a1_en0),
-        .A0  (sram_a1_a0),
-        .Di0 (sram_a1_di0),
-        .Do0 (sram_a1_do0)
+        .WE0 (sram_a_we0),
+        .EN0 (sram_a_en0),
+        .A0  (sram_a_a0),
+        .Di0 (sram_a_di0),
+        .Do0 (sram_a_do0)
     );
     // ====================================================================
     // SRAM B — mailbox (sysclk, 128 B)
@@ -245,17 +234,11 @@ module attoio_macro (
         .mmio_sel    (mmio_sel),
         .mmio_rdata  (mmio_rdata),
 
-        .sram_a0_a0  (sram_a0_a0),
-        .sram_a0_di0 (sram_a0_di0),
-        .sram_a0_we0 (sram_a0_we0),
-        .sram_a0_en0 (sram_a0_en0),
-        .sram_a0_do0 (sram_a0_do0),
-
-        .sram_a1_a0  (sram_a1_a0),
-        .sram_a1_di0 (sram_a1_di0),
-        .sram_a1_we0 (sram_a1_we0),
-        .sram_a1_en0 (sram_a1_en0),
-        .sram_a1_do0 (sram_a1_do0),
+        .sram_a_a0   (sram_a_a0),
+        .sram_a_di0  (sram_a_di0),
+        .sram_a_we0  (sram_a_we0),
+        .sram_a_en0  (sram_a_en0),
+        .sram_a_do0  (sram_a_do0),
 
         .sram_b_a0   (sram_b_a0),
         .sram_b_di0  (sram_b_di0),

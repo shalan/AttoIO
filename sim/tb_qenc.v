@@ -133,7 +133,7 @@ module tb_qenc;
         end
     endtask
 
-    reg [31:0] fw_image [0:255];
+    reg [31:0] fw_image [0:127];
     integer i;
     reg [31:0] rd;
 
@@ -141,7 +141,7 @@ module tb_qenc;
         $dumpfile("tb_qenc.vcd");
         $dumpvars(0, tb_qenc);
 
-        for (i = 0; i < 256; i = i + 1) fw_image[i] = 32'h00000013;
+        for (i = 0; i < 128; i = i + 1) fw_image[i] = 32'h00000013;
         $readmemh(`FW_HEX, fw_image);
 
         PADDR = 0; PWDATA = 0; PSTRB = 0;
@@ -151,7 +151,7 @@ module tb_qenc;
         repeat (5) @(posedge sysclk);
 
         $display("--- tb_qenc: loading firmware ---");
-        for (i = 0; i < 256; i = i + 1)
+        for (i = 0; i < 128; i = i + 1)
             apb_write(i * 4, fw_image[i], 4'hF);
         apb_write(11'h708, 32'h0, 4'hF);
 

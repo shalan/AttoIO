@@ -35,11 +35,14 @@
 #define OUT_PAD  8u
 #define OUT_MASK (1u << OUT_PAD)
 
-#define N_EDGES  6
+#define N_EDGES  4    /* 4 edges → 3 inter-edge deltas reproduced */
 
-volatile uint32_t cap_times[N_EDGES];
-volatile uint32_t cap_idx;
-volatile uint32_t capture_done;
+/* 16-bit timestamps save 8 B of BSS vs uint32_t; deltas up to 65535
+ * clk_iop cycles (~2.6 ms @ 25 MHz) cover any reasonable IR frame
+ * after protocol-scaling. */
+volatile uint16_t cap_times[N_EDGES];
+volatile uint8_t  cap_idx;          /* fits 0..N_EDGES easily */
+volatile uint8_t  capture_done;
 
 static inline void wait_until(uint32_t target) {
     TIMER_CMP(0)  = (target - 1u) | TIMER_CMP_EN;
@@ -50,15 +53,12 @@ static inline void wait_until(uint32_t target) {
 
 void __isr(void) {
     if (TIMER_STATUS & TIMER_STATUS_CAPTURE) {
-        uint32_t t = TIMER_CAP;
         uint32_t i = cap_idx;
         if (i < N_EDGES) {
-            cap_times[i] = t;
+            cap_times[i] = (uint16_t)TIMER_CAP;
             i++;
             cap_idx = i;
-            if (i >= N_EDGES) {
-                capture_done = 1;
-            }
+            if (i >= N_EDGES) capture_done = 1;
         }
         TIMER_STATUS = TIMER_STATUS_CAPTURE;
     }
@@ -69,9 +69,6 @@ int main(void) {
     capture_done = 0;
 
     MAILBOX_W32[0] = 0;
-    MAILBOX_W32[1] = 0;
-    MAILBOX_W32[3] = 0;
-    MAILBOX_W32[4] = 0;
 
     /* pad[3] as input, pad[8] as output (starting LOW). */
     GPIO_OE_CLR  = 1u << IN_PAD;
@@ -91,9 +88,6 @@ int main(void) {
 
     while (!capture_done) wfi();
 
-    MAILBOX_W32[1] = cap_idx;
-    MAILBOX_W32[3] = cap_times[0];
-    MAILBOX_W32[4] = cap_times[N_EDGES - 1];
     MAILBOX_W32[0] = 1;    /* LEARN done */
 
     /* -------- Phase 2: REPLAY -------- */
