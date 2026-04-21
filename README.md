@@ -104,7 +104,7 @@ attoio/
 | Tier-2 examples (WS2812, TM1637, HD44780, HT1621) | ✅ |
 | Tier-3 examples (4-ch PWM, stepper, BLDC, brushed DC) | ✅ |
 | Tier-4 examples (tone melody, PWM-DAC, PDM-DAC, PSG 3-voice) | ✅ |
-| Tier-5 examples (IR RX) | ◐ 1 of 3 |
+| Tier-5 examples (IR RX, IR TX, learning remote) | ✅ |
 | Tier-6 examples (freq counter, cap touch, quad encoder) | ◐ 3 of 5 |
 | Tier-7 examples (1-Wire master) | ◐ 1 of 4 |
 | Yosys synthesis + OpenSTA (sky130) | ✅ **WNS +0.97 ns @ 75 MHz, 0.40 mm²** |
@@ -168,11 +168,13 @@ of **1024 bytes**.
 | `pdm_dac` | 376 B | `tb_pdm_dac` | 1-bit PDM via first-order ΣΔ modulator |
 | `psg3` | 426 B | `tb_psg3` | PSG-style 3-voice square-wave synth |
 
-### Tier 5 — IR (partial)
+### Tier 5 — IR
 
 | Example | FW size | Testbench | What it demonstrates |
 |---|---:|---|---|
 | `ir_rx` | 366 B | `tb_ir_rx` | NEC 32-bit decoder using TIMER CAPTURE Δ-classification |
+| `ir_tx` | 306 B | `tb_ir_tx` | NEC 32-bit envelope transmitter, absolute-time edge scheduling |
+| `ir_learn` | 468 B | `tb_ir_learn` | Universal learning remote — capture N edges, replay the waveform |
 
 ### Tier 6 — Input / sensing (partial)
 
@@ -195,7 +197,7 @@ SRAM A headroom** on top of the 64 B reserved stack — plenty of room
 for more complex future examples (IR TX + learning remote, PS/2
 keyboard/mouse, Modbus RTU, 1-wire with CRC tables, …).
 
-## Testbenches (27 passing)
+## Testbenches (29 passing)
 
 Every example above has a matching `sim/tb_*.v` testbench (plus
 `run_*.sh` driver).  Full regression:

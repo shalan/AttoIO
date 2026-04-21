@@ -80,11 +80,13 @@ Plan: `docs/examples_plan.md` · each example links to its firmware
 | E14 | PDM 1-bit DAC | ☑ | Phase E14 — `sw/pdm_dac`. First-order sigma-delta at 100 kHz bit rate. Expected 159 HIGH pulses, measured 158. Commit `3c0cd7f`. |
 | E15 | PSG-style 3-voice synth | ☑ | Phase E15 — `sw/psg3`. 3 independent voice phase counters in one ISR, pads 8/9/10, pitches 5/10/25 kHz at 100 kHz sample rate. Exact edge counts (10/20/50). Commit `09fadb7`. |
 
-### Tier 5 — IR (partial)
+### Tier 5 — IR
 
 | # | Example | Status | Notes |
 |---|---|---|---|
 | E16 | IR RX (NEC decoder via TIMER CAPTURE) | ☑ | Phase E16 — `sw/ir_rx`. TIMER CNT free-running, CAP rising-edge IRQ; ISR computes Δ from last capture, classifies header vs bit-0 vs bit-1. NEC frame 0xABCD1234 decoded cleanly, 50× scaled timings. Commit `23960f5`. |
+| E17 | IR TX (NEC envelope) | ☑ | Phase E17 — `sw/ir_tx`. Absolute-time edge scheduling via TIMER CMP0 polling so per-edge jitter doesn't accumulate. Header 181.12 µs (target 180, +0.6 %), frame 0xABCD1234 decoded cleanly from TB-side envelope timing. Commit `fc9351b`. |
+| E18 | Universal learning remote | ☑ | Phase E18 — `sw/ir_learn`. Two-phase: LEARN uses TIMER CAPTURE on both edges of pad[3] to record N timestamps, REPLAY toggles pad[8] at cumulative delta offsets. 5 inter-edge deltas replayed within ±2.4 % of the captured values. Commit pending. |
 
 ### Tier 6 — Input / sensing (partial)
 
@@ -98,14 +100,6 @@ Plan: `docs/examples_plan.md` · each example links to its firmware
 | # | Example | Status | Notes |
 |---|---|---|---|
 | E25 | 1-Wire master (DS18B20) | ☑ | Phase E25 — `sw/onewire` + `sim/ds18b20_slave_model.v`. Bit-bang reset/presence + write/read byte. Reads 9-byte scratchpad, temperature decoded as 0x0191 (25.0625 °C). Commit `24f2c5a`. |
-
-### Tier 5 — IR
-
-| # | Example | Status | Commit |
-|---|---|---|---|
-| E16 | IR RX (NEC / SIRC / RC-5 auto-detect) | ☐ | — |
-| E17 | IR TX (NEC + Sony) | ☐ | — |
-| E18 | Universal learning remote | ☐ | — |
 
 ### Tier 6 — Input / sensing
 
