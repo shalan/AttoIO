@@ -10,8 +10,7 @@
         "dir::../../rtl/attoio_timer.v",
         "dir::../../rtl/attoio_wdt.v",
         "dir::../../rtl/attoio_macro.v",
-        "dir::../../models/dffram_gen/dffram_wrapper.v",
-        "dir::../../models/dffram_gen/dffram_combined.nl.v",
+        "dir::../../models/dffram_rtl.v",
         "dir::../../../frv32/rtl/attorv32.v"
     ],
 
@@ -22,23 +21,33 @@
     ],
 
     "CLOCK_PORT": ["sysclk", "clk_iop"],
-    "CLOCK_PERIOD": 15.0,
+    "CLOCK_PERIOD": 16.667,
 
-    "FP_SIZING": "relative",
-    "FP_CORE_UTIL": 50,
-    "FP_ASPECT_RATIO": 1,
-    "FP_CORE_MARGIN": 4,
+    "PNR_SDC_FILE":     "dir::attoio.sdc",
+    "SIGNOFF_SDC_FILE": "dir::attoio.sdc",
 
-    "PL_TARGET_DENSITY": 0.55,
-    "PL_RESIZER_HOLD_SLACK_MARGIN": 0.2,
-    "PL_RESIZER_SETUP_SLACK_MARGIN": 0.1,
-    "GRT_ANT_ITERS": 10,
-    "DIODE_ON_PORTS": "in",
+    "FP_SIZING":       "absolute",
+    "DIE_AREA":        "0 0 1000 500",
+    "FP_CORE_MARGIN":  5,
+
+    "PL_TARGET_DENSITY": 0.60,
+    "PL_RESIZER_HOLD_SLACK_MARGIN":  0.1,
+    "PL_RESIZER_SETUP_SLACK_MARGIN": 0.0,
+    "GRT_RESIZER_HOLD_SLACK_MARGIN":  0.1,
+    "GRT_RESIZER_SETUP_SLACK_MARGIN": 0.0,
+    "DESIGN_REPAIR_MAX_WIRE_LENGTH":  300,
+    "CTS_DISTANCE_BETWEEN_BUFFERS":   100,
+
+    "FP_PIN_ORDER_CFG": "dir::pin_order.cfg",
+
+    "GRT_ANTENNA_REPAIR_ITERS": 4,
+    "DRT_ANTENNA_REPAIR_ITERS": 4,
+    "DIODE_ON_PORTS": "both",
     "RUN_HEURISTIC_DIODE_INSERTION": true,
+    "GRT_ANTENNA_REPAIR_JUMPER_ONLY": true,
+    "DRT_ANTENNA_REPAIR_JUMPER_ONLY": true,
 
     "DESIGN_IS_CORE": false,
-
-    "ERROR_ON_SYNTH_CHECKS": false,
 
     "PDK": "sky130A",
     "STD_CELL_LIBRARY": "sky130_fd_sc_hd"
