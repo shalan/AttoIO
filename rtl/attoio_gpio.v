@@ -167,9 +167,10 @@ module attoio_gpio #(
     localparam W_WAKE_MASK    = 6'h1A;
     localparam W_WAKE_EDGE    = 6'h1B;
 
-    // PADCTL index — low log2(NGPIO) bits of the word offset.
+    // PADCTL index — word_off - W_PADCTL_BASE, truncated to log2(NGPIO) bits
     localparam PINW = $clog2(NGPIO);
-    wire [PINW-1:0] padctl_idx = word_off[PINW-1:0];
+    wire [5:0]      padctl_off_raw = word_off - W_PADCTL_BASE;
+    wire [PINW-1:0] padctl_idx     = padctl_off_raw[PINW-1:0];
     wire padctl_sel = (word_off >= W_PADCTL_BASE) && (word_off <= W_PADCTL_END);
 
     // ====================================================================
