@@ -9,34 +9,52 @@ and intended to be embedded inside a larger SoC as an **APB4 slave**.
 The host CPU writes a small firmware image into AttoIO's local RAM over
 APB, then releases the IOP from reset. The IOP runs programs that:
 
-- emulate peripherals in software (UART, I²C, SPI, GPIO expander,
-  sensor decoders, …) by bit-banging 16 dedicated I/O pads,
+- **emulate peripherals** in software (UART, I²C, SPI, GPIO expander,
+  sensor decoders, IR TX/RX, WS2812, BLDC 6-step, stepper, …) by
+  bit-banging the pads it owns,
+- **offload compute** for the host when not in emulation mode (CRC, DSP,
+  simple crypto, sensor decimation) — AttoIO is a free RV32 with 1 KB
+  of RAM,
 - accelerate SPI transfers via a built-in byte shift helper (~10× vs
   bit-bang),
 - schedule precise events via a 24-bit TIMER with 4 compare channels and
   pad-toggle output (software PWM, baud generation, protocol bit clocks,
   IR carriers),
-- perform basic local processing on data exchanged with the host
-  through a 256 B shared mailbox (with concurrent-access split across
-  two banks).
+- act as a **pad-sharing hub** for the host SoC — three host-peripheral
+  bundles (`hp0`/`hp1`/`hp2`) can be routed pad-by-pad at runtime via
+  the host-owned **PINMUX** register. The host's own UART/SPI/I²C
+  controllers can reach the chip pads through AttoIO while AttoIO uses
+  the remaining pads for its own emulation.
+- expose a **minimum RPC API** (SYS + PADCTL + INIT) that lets the host
+  configure pads through the IOP without leaking mailbox layouts into
+  host firmware.
 
 Because the firmware is host-loadable, a single hardened AttoIO instance
 can adopt a different "personality" per application without re-taping out.
 
-## Architecture at a glance
+## Architecture at a glance — v1.0
 
 - **Core:** AttoRV32 RV32EC (single-port RF, shared adder, serial
   shift) — compact configuration, `ADDR_WIDTH = 11` (2 KB address
   space).
-- **Memory (640 B total in two
-  [DFFRAM](https://github.com/shalan/sky130_gen_dffram) macros, Phase 0.9):**
-  - 1 × 128×32 (**512 B** private SRAM A, single bank) — code + data + stack
+- **Memory (1152 B total in two
+  [DFFRAM](https://github.com/shalan/sky130_gen_dffram) macros):**
+  - 1 × 256×32 (**1024 B** private SRAM A, single bank) — code + data + stack
   - 1 × 32×32 (**128 B** shared mailbox, single bank, host-priority
     arbitrated)
 - **Host interface:** AMBA **APB4 slave** (PADDR 11-bit, PWDATA/PRDATA
   32-bit, PSTRB byte-enables, PREADY wait-state).
-- **I/O:** 16 bidirectional pads, each with `in`, `out`, `out_en`, and
-  an 8-bit extended pad-control (drive strength, slew, pull).
+- **I/O:**
+  - `NGPIO` bidirectional pads (parameterized: **8 or 16**, default 16),
+    each with `in`, `out`, `out_en`, and an 8-bit extended pad-control
+    (drive strength, slew, pull).
+  - Three **host-peripheral bundles** `hp0/hp1/hp2`, each a flat
+    `NGPIO`-wide array of `out/oe/in`.  Slot `p` is bit-parallel with
+    pad `p`.  SoC-side wiring aggregates host peripherals (e.g. host
+    UARTs, SPIs, I²Cs) into whichever slot the integrator chooses.
+  - **PINMUX** register (host-writable via APB) selects per-pad drive
+    source: AttoIO / hp0 / hp1 / hp2.  Reset = all-zeros → AttoIO-owned
+    (backward compatible with v0.9).
 - **Clocking:** dual-clock — `sysclk` (APB bus side) + `clk_iop`
   (`sysclk/N`, externally divided). No internal CDC required —
   `clk_iop` edges are a strict subset of `sysclk` edges by construction.
@@ -52,16 +70,29 @@ can adopt a different "personality" per application without re-taping out.
   - Per-pin wake-edge detector (rise/fall/both + mask).
   - 16-bit watchdog (pet-on-write semantics, NMI + host alert on
     expire).
+- **Minimum RPC** (`sw/common/attoio_rpc.{h,c}`): SYS (ping, reset-ack),
+  PADCTL (set, get), INIT (gpio preset).  ~250 B of reusable IOP code.
 
-### Memory map (11-bit PADDR / IOP address, Phase 0.9)
+### Memory map (11-bit PADDR / IOP address, v1.0)
 
 | Range | Size | Contents |
 |---|---:|---|
-| `0x000 – 0x1FF` | 512 B | SRAM A (private, RAM128, single bank) |
-| `0x200 – 0x5FF` | — | *unmapped — reads return 0* |
+| `0x000 – 0x3FF` | 1024 B | SRAM A (private, RAM256, single bank) |
+| `0x400 – 0x5FF` | — | *unmapped — reads return 0* |
 | `0x600 – 0x67F` | 128 B | SRAM B (mailbox, RAM32) |
 | `0x680 – 0x6FF` | — | *unmapped* |
-| `0x700 – 0x7FF` | 256 B | MMIO page (GPIO, SPI, TIMER, WAKE, WDT, doorbells) |
+| `0x700 – 0x7FF` | 256 B | MMIO page (GPIO, SPI, TIMER, WAKE, WDT, doorbells, PINMUX, VERSION) |
+
+### Host-visible control registers (APB page @ 0x700)
+
+| PADDR | Name | Access | Notes |
+|---|---|---|---|
+| `0x700` | DOORBELL_H2C | W1S | host → IOP |
+| `0x704` | DOORBELL_C2H | R/W1C | IOP → host (also the RPC ACK signal) |
+| `0x708` | IOP_CTRL | RW | bit 0 reset, bit 1 NMI pulse |
+| `0x70C` | VERSION | RO | `0x01_00_00_00` = v1.0.0 |
+| `0x710` | PINMUX_LO | RW | pads 0-7, 2 bits each (00=AttoIO, 01/10/11=hp0/1/2) |
+| `0x714` | PINMUX_HI | RW | pads 8-15 (ignored at NGPIO=8) |
 
 ## Repository layout
 
@@ -94,10 +125,14 @@ attoio/
 
 | Milestone | Status |
 |---|---|
-| Architecture spec (v2.2 — Phase 0.9 downsize) | ✅ frozen |
+| Architecture spec (v1.0 — SRAM A 1 KB, PINMUX, RPC, NGPIO param) | ✅ frozen |
 | RTL: memmux, GPIO, ctrl, SPI, TIMER, WDT, APB IF, macro top | ✅ |
+| NGPIO parameter (8 or 16) | ✅ H14 |
+| Host-controlled PINMUX + hp0/hp1/hp2 bundles | ✅ H13 |
+| Minimum RPC (SYS + PADCTL + INIT) dispatcher + host lib | ✅ H15 |
+| Coexistence example (IOP UART + host hp0) | ✅ H16 |
 | Firmware infrastructure (crt0, link.ld, attoio.h, Makefile) | ✅ |
-| **Regression (28 testbenches)** | ✅ all pass |
+| **Regression (37 testbenches)** | ✅ all pass |
 | Tier-1 examples (UART TX/RX, SPI master, I²C master) | ✅ |
 | Tier-2 examples (WS2812, TM1637, HD44780, HT1621) | ✅ |
 | Tier-3 examples (4-ch PWM, stepper, BLDC, brushed DC) | ✅ |
@@ -115,11 +150,11 @@ All firmwares are stand-alone — one `main.c`, no shared code beyond
 `crt0.S` + `attoio.h`.  They're grouped by theme below.
 
 All measurements are `text + data + bss` from
-`riscv64-unknown-elf-size -d`, against the Phase 0.9 SRAM A budget
-of **512 bytes** (with 64 B reserved for stack → 448 B usable for
-text + data + bss).  One historical example (`i2c_eeprom`, 584 B)
-exceeds this budget and is excluded from the default regression
-sweep — see notes at the end of this section.
+`riscv64-unknown-elf-size -d`, against the **v1.0 SRAM A budget of
+1024 bytes** (up from 512 B in Phase 0.9, restoring the headroom needed
+for the RPC dispatcher + application logic).  64 B reserved for stack →
+**960 B usable** for text + data + bss.  Every Phase 0.9 example that
+had been exempted for size is now back in the default sweep.
 
 ### Tier 0 — Core / IRQ infrastructure
 
@@ -220,27 +255,61 @@ Four extra diagnostic testbenches (`tb_core_hazard`, `tb_macro_hazard`,
 probes for future store-sequence debugging.  They're not part of the
 default regression but are runnable standalone.
 
-## Key numbers (Phase 0.9, sky130_fd_sc_hd, TT 1.80 V 25 °C)
+## Key numbers (v1.0, sky130_fd_sc_hd, TT 1.80 V 25 °C)
 
 | Metric | Value |
 |---|---|
-| Chip area | ≈ **0.25 mm²** (250,918 µm²) |
-| Private SRAM (SRAM A, 1 × 128×32) | **512 B** |
+| Die (last PnR at 1 mm × 0.5 mm) | **0.500 mm²** |
+| Private SRAM (SRAM A, 1 × 256×32) | **1024 B** |
 | Mailbox (SRAM B, 1 × 32×32) | **128 B** |
-| Power @ 10 % activity | **38.2 mW** (down from 73.3 mW @ Phase 0.8) |
-| Setup WNS @ `clk_iop = 30 MHz` | > +20 ns |
-| Setup WNS @ `sysclk = 75 MHz` | **+1.25 ns** (MET — was +0.97 in Phase 0.8) |
+| Post-PnR core utilization | ~84 % |
+| Post-PnR total cell count | ~85 k instances |
+| Power @ 10 % activity (post-PnR) | **44.1 mW** |
+| Setup WNS @ `sysclk = 60 MHz`, 150 ps uncertainty, 3.5 % derate | **0.0 ns** (MET, TT/FF) |
+| Hold WNS @ all corners TT/FF | 0.0 ns (MET) |
 
-Phase progression so far:
+### Phase progression
 
-| Phase | DFFRAMs | SRAM total | Chip area | Setup WNS @ 75 MHz |
+| Phase | DFFRAMs | SRAM total | Chip area | Notes |
 |---|---|---|---|---|
-| 0.6 (initial) | 5 | 1792 B | ≈ 0.56 mm² | −0.15 ns ❌ |
-| **0.8** | 3 | 1152 B | ≈ 0.40 mm² | +0.97 ns ✅ |
-| **0.9** | **2** | **640 B** | **≈ 0.25 mm²** | **+1.25 ns ✅** |
+| 0.6 (initial) | 5 | 1792 B | ≈ 0.56 mm² | — |
+| 0.8 | 3 | 1152 B | ≈ 0.40 mm² | BUG-001 fixed |
+| 0.9 | 2 |  640 B | ≈ 0.25 mm² | tight SRAM, no PINMUX |
+| **1.0** | **2** | **1152 B** | **≈ 0.50 mm²** | **PINMUX + hp0/1/2 + RPC + NGPIO param** |
 
 Full post-synth/STA breakdown is in
 [`docs/synth_sta_report.md`](docs/synth_sta_report.md).
+
+## v1.0 host-side API (minimum RPC)
+
+The host drives AttoIO through three primitives: firmware load (over APB
+SRAM A during IOP reset), mailbox (128 B shared SRAM B), and two
+doorbells.  On top of those, `sw/common/attoio_rpc.{c,h}` lands a tiny
+RPC layer the host can call to configure pad electrical characteristics
+and GPIO initial state without leaking mailbox layouts.
+
+```c
+/* host pseudo-code */
+attoio_load_firmware("my_app.bin");
+attoio_release_reset();
+
+uint32_t ver = attoio_rpc_sys_ping();                 // → 0x01000000
+attoio_rpc_padctl_set(3, PAD_PULLUP | PAD_SCHMITT);   // pad 3 electrical
+attoio_rpc_init_gpio(/*out*/0x000F, /*oe*/0x00FF);    // preset OUT + OE
+
+/* Then the host lets AttoIO run autonomously.  For pads the host wants
+ * to drive itself, program PINMUX: */
+ATTOIO_PINMUX_LO = /*pads 0-7: hp0 on 2,3,4; attoio on rest*/ 0x0150;
+```
+
+On the IOP side, any firmware that pulls `sw/common/attoio_rpc.c`
+into its link gets a `attoio_rpc_service()` helper — call it at the
+top of `__isr` to service RPC requests between application work.  The
+stock `sw/rpc_demo/` firmware is 362 B: just the dispatcher and a
+`wfi` loop, leaving ~700 B of SRAM A for optional application logic.
+
+See [`sim/tb_rpc.v`](sim/tb_rpc.v) for the full round-trip protocol
+(SYS.ping, PADCTL.set/get, INIT.gpio, error paths).
 
 ## Running the flow
 
@@ -257,6 +326,10 @@ bash sim/run_timer.sh
 bash sim/run_wake.sh
 bash sim/run_wdt.sh
 bash sim/run_fw_boot.sh
+bash sim/run_pinmux.sh                    # PINMUX + hp bundle tests
+bash sim/run_pinmux_ngpio8.sh             # NGPIO=8 smoke test
+bash sim/run_rpc.sh                       # SYS/PADCTL/INIT round-trip
+bash sim/run_coexist.sh                   # IOP UART + host hp0 coexist
 
 # Yosys synthesis + OpenSTA
 bash syn/run_synth.sh                     # → build/attoio_macro.syn.v
