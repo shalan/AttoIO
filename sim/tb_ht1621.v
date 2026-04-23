@@ -53,7 +53,13 @@ module tb_ht1621;
         .PWDATA(PWDATA), .PSTRB(PSTRB),
         .PRDATA(PRDATA), .PREADY(PREADY), .PSLVERR(PSLVERR),
         .pad_in(pad_in), .pad_out(pad_out), .pad_oe(pad_oe), .pad_ctl(pad_ctl),
-        .irq_to_host(irq_to_host)
+        .irq_to_host(irq_to_host),
+
+        .hp0_out(16'h0), .hp0_oe(16'h0), .hp0_in(),
+
+        .hp1_out(16'h0), .hp1_oe(16'h0), .hp1_in(),
+
+        .hp2_out(16'h0), .hp2_oe(16'h0), .hp2_in()
     );
 
     /* Push-pull observation. The model only acts while CS is low, which

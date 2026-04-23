@@ -1,22 +1,29 @@
 /******************************************************************************/
-// attoio_macro — AttoIO single hard macro (v2)
+// attoio_macro — AttoIO single hard macro (v1.0)
 //
 // Contents:
 //   - AttoRV32 core (RV32EC, ADDR_WIDTH=11)
-//   - 3 × SRAM A (RAM128 DFFRAM)          → 1536 B of private SRAM
-//   - 2 × SRAM B (RAM32 DFFRAM)           →  256 B of host/IOP mailbox
+//   - 1 × SRAM A (256×32 DFFRAM)          →  1024 B of private SRAM
+//   - 1 × SRAM B (32×32  DFFRAM)          →   128 B of host/IOP mailbox
 //   - APB4 slave interface on the host side
 //   - Memory mux + address decoder + SRAM B arbiter
 //   - GPIO + PADCTL + WAKE (per-pin) + SPI shift helper + TIMER + WDT
-//   - Doorbells + IOP_CTRL + IRQ routing
+//   - Doorbells + IOP_CTRL + PINMUX + IRQ routing
+//   - 4:1 per-pad output mux selecting between attoio drive and
+//     three host-peripheral bundles (hp0/hp1/hp2), host-controlled
+//     through the PINMUX register.
 //
 // Memory map (from both IOP and APB views; ADDR_WIDTH = 11):
-//   0x000 – 0x1FF  SRAM A0 (RAM128)
-//   0x200 – 0x3FF  SRAM A1 (RAM128)
-//   0x400 – 0x5FF  SRAM A2 (RAM128)
-//   0x600 – 0x67F  SRAM B0 mailbox
-//   0x680 – 0x6FF  SRAM B1 mailbox
-//   0x700 – 0x7FF  MMIO page
+//   0x000 – 0x3FF  SRAM A (256×32 DFFRAM, 1 KB)
+//   0x600 – 0x67F  SRAM B mailbox (32×32 DFFRAM, 128 B)
+//   0x700 – 0x7FF  MMIO page (256 B)
+//
+// PINMUX semantics (2 bits per pad, in attoio_ctrl register @ APB 0x710/0x714):
+//   00  pad driven by AttoIO (GPIO / Timer / SPI as programmed by IOP)
+//   01  pad driven by hp0_out / hp0_oe  (host peripheral bundle 0)
+//   10  pad driven by hp1_out / hp1_oe  (host peripheral bundle 1)
+//   11  pad driven by hp2_out / hp2_oe  (host peripheral bundle 2)
+// Inputs: hp{0,1,2}_in always mirror pad_in (no gating).
 /******************************************************************************/
 
 module attoio_macro (
@@ -28,7 +35,7 @@ module attoio_macro (
     input  wire         rst_n,
 
     // ---- APB4 slave (host / system bus, sysclk domain) ----
-    //      PCLK tied to sysclk internally (simpler for v2).
+    //      PCLK tied to sysclk internally (simpler for v1.0).
     input  wire [10:0]  PADDR,
     input  wire         PSEL,
     input  wire         PENABLE,
@@ -44,6 +51,21 @@ module attoio_macro (
     output wire [15:0]  pad_out,
     output wire [15:0]  pad_oe,
     output wire [127:0] pad_ctl,
+
+    // ---- Host-peripheral bundle 0 (e.g. host SPI / UART / I²C core) ----
+    input  wire [15:0]  hp0_out,
+    input  wire [15:0]  hp0_oe,
+    output wire [15:0]  hp0_in,
+
+    // ---- Host-peripheral bundle 1 ----
+    input  wire [15:0]  hp1_out,
+    input  wire [15:0]  hp1_oe,
+    output wire [15:0]  hp1_in,
+
+    // ---- Host-peripheral bundle 2 ----
+    input  wire [15:0]  hp2_out,
+    input  wire [15:0]  hp2_oe,
+    output wire [15:0]  hp2_in,
 
     // ---- IRQ to host ----
     output wire         irq_to_host
@@ -287,21 +309,49 @@ module attoio_macro (
         .pad_ctl    (pad_ctl)
     );
 
-    /* Timer pad override mux */
-    assign pad_out = (gpio_pad_out & ~timer_pad_sel) |
-                     (timer_pad_val &  timer_pad_sel);
-    assign pad_oe  =  gpio_pad_oe | timer_pad_sel;
+    /* AttoIO-internal drive: merge GPIO and Timer override per pad */
+    wire [15:0] attoio_pad_out =
+        (gpio_pad_out & ~timer_pad_sel) | (timer_pad_val & timer_pad_sel);
+    wire [15:0] attoio_pad_oe  =  gpio_pad_oe | timer_pad_sel;
+
+    /* -------------------------------------------------------------------- */
+    /*  Per-pad 4:1 output mux selecting between attoio drive and the       */
+    /*  three host-peripheral bundles (hp0/hp1/hp2), controlled by the      */
+    /*  PINMUX register inside attoio_ctrl.                                 */
+    /* -------------------------------------------------------------------- */
+    genvar gp;
+    generate for (gp = 0; gp < 16; gp = gp + 1) begin : g_padmux
+        wire [1:0] sel = pinmux[2*gp +: 2];
+        reg po, poe;
+        always @(*) begin
+            case (sel)
+                2'b00: begin po = attoio_pad_out[gp]; poe = attoio_pad_oe[gp]; end
+                2'b01: begin po = hp0_out[gp];        poe = hp0_oe[gp];        end
+                2'b10: begin po = hp1_out[gp];        poe = hp1_oe[gp];        end
+                2'b11: begin po = hp2_out[gp];        poe = hp2_oe[gp];        end
+            endcase
+        end
+        assign pad_out[gp] = po;
+        assign pad_oe[gp]  = poe;
+    end endgenerate
+
+    /* Host-peripheral bundles always see pad_in (no gating) */
+    assign hp0_in = pad_in;
+    assign hp1_in = pad_in;
+    assign hp2_in = pad_in;
 
     // ====================================================================
-    // Control — doorbells + IOP_CTRL
+    // Control — doorbells + IOP_CTRL + PINMUX + VERSION
     // ====================================================================
     wire irq_to_host_ctrl;
+    wire [31:0] pinmux;
     attoio_ctrl u_ctrl (
         .sysclk         (sysclk),
         .rst_n          (rst_n),
 
-        .host_reg_addr  (host_addr[3:0]),
+        .host_reg_addr  (host_addr[7:0]),
         .host_reg_wdata (host_wdata),
+        .host_reg_wstrb (host_wmask),
         .host_reg_wen   (host_wen & host_sel_reg),
         .host_reg_ren   (host_ren & host_sel_reg),
         .host_reg_rdata (ctrl_host_rdata),
@@ -317,7 +367,8 @@ module attoio_macro (
         .iop_reset      (iop_reset),
         .iop_nmi        (iop_nmi_base),
         .iop_irq        (iop_irq_base),
-        .irq_to_host    (irq_to_host_ctrl)
+        .irq_to_host    (irq_to_host_ctrl),
+        .pinmux         (pinmux)
     );
 
     assign irq_to_host = irq_to_host_ctrl | wdt_host_alert;
