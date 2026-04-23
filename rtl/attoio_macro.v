@@ -26,50 +26,60 @@
 // Inputs: hp{0,1,2}_in always mirror pad_in (no gating).
 /******************************************************************************/
 
-module attoio_macro (
+module attoio_macro #(
+    parameter NGPIO = 16     // 8 or 16
+) (
     // ---- Clocks ----
-    input  wire         sysclk,
-    input  wire         clk_iop,
+    input  wire                 sysclk,
+    input  wire                 clk_iop,
 
     // ---- Reset ----
-    input  wire         rst_n,
+    input  wire                 rst_n,
 
     // ---- APB4 slave (host / system bus, sysclk domain) ----
-    //      PCLK tied to sysclk internally (simpler for v1.0).
-    input  wire [10:0]  PADDR,
-    input  wire         PSEL,
-    input  wire         PENABLE,
-    input  wire         PWRITE,
-    input  wire [31:0]  PWDATA,
-    input  wire [3:0]   PSTRB,
-    output wire [31:0]  PRDATA,
-    output wire         PREADY,
-    output wire         PSLVERR,
+    input  wire [10:0]          PADDR,
+    input  wire                 PSEL,
+    input  wire                 PENABLE,
+    input  wire                 PWRITE,
+    input  wire [31:0]          PWDATA,
+    input  wire [3:0]           PSTRB,
+    output wire [31:0]          PRDATA,
+    output wire                 PREADY,
+    output wire                 PSLVERR,
 
     // ---- Pad interface ----
-    input  wire [15:0]  pad_in,
-    output wire [15:0]  pad_out,
-    output wire [15:0]  pad_oe,
-    output wire [127:0] pad_ctl,
+    input  wire [NGPIO-1:0]     pad_in,
+    output wire [NGPIO-1:0]     pad_out,
+    output wire [NGPIO-1:0]     pad_oe,
+    output wire [NGPIO*8-1:0]   pad_ctl,
 
-    // ---- Host-peripheral bundle 0 (e.g. host SPI / UART / I²C core) ----
-    input  wire [15:0]  hp0_out,
-    input  wire [15:0]  hp0_oe,
-    output wire [15:0]  hp0_in,
+    // ---- Host-peripheral bundle 0 ----
+    input  wire [NGPIO-1:0]     hp0_out,
+    input  wire [NGPIO-1:0]     hp0_oe,
+    output wire [NGPIO-1:0]     hp0_in,
 
     // ---- Host-peripheral bundle 1 ----
-    input  wire [15:0]  hp1_out,
-    input  wire [15:0]  hp1_oe,
-    output wire [15:0]  hp1_in,
+    input  wire [NGPIO-1:0]     hp1_out,
+    input  wire [NGPIO-1:0]     hp1_oe,
+    output wire [NGPIO-1:0]     hp1_in,
 
     // ---- Host-peripheral bundle 2 ----
-    input  wire [15:0]  hp2_out,
-    input  wire [15:0]  hp2_oe,
-    output wire [15:0]  hp2_in,
+    input  wire [NGPIO-1:0]     hp2_out,
+    input  wire [NGPIO-1:0]     hp2_oe,
+    output wire [NGPIO-1:0]     hp2_in,
 
     // ---- IRQ to host ----
-    output wire         irq_to_host
+    output wire                 irq_to_host
 );
+
+    initial begin
+        if (NGPIO != 8 && NGPIO != 16) begin
+            $display("attoio_macro: NGPIO must be 8 or 16, got %0d", NGPIO);
+            $fatal;
+        end
+    end
+
+    localparam PINW = $clog2(NGPIO);
 
     // ====================================================================
     // Internal "host bus" driven by the APB wrapper
@@ -273,17 +283,17 @@ module attoio_macro (
     // GPIO + PADCTL + wake
     // ====================================================================
     wire        spi_active;
-    wire [3:0]  spi_sck_pin;
-    wire [3:0]  spi_mosi_pin;
+    wire [PINW-1:0] spi_sck_pin;
+    wire [PINW-1:0] spi_mosi_pin;
     wire        spi_sck_val;
     wire        spi_mosi_val;
 
-    wire [15:0] gpio_pad_out;
-    wire [15:0] gpio_pad_oe;
-    wire [15:0] timer_pad_sel;
-    wire [15:0] timer_pad_val;
+    wire [NGPIO-1:0] gpio_pad_out;
+    wire [NGPIO-1:0] gpio_pad_oe;
+    wire [NGPIO-1:0] timer_pad_sel;
+    wire [NGPIO-1:0] timer_pad_val;
 
-    attoio_gpio u_gpio (
+    attoio_gpio #(.NGPIO(NGPIO)) u_gpio (
         .sysclk     (sysclk),
         .clk_iop    (clk_iop),
         .rst_n      (rst_n),
@@ -310,9 +320,9 @@ module attoio_macro (
     );
 
     /* AttoIO-internal drive: merge GPIO and Timer override per pad */
-    wire [15:0] attoio_pad_out =
+    wire [NGPIO-1:0] attoio_pad_out =
         (gpio_pad_out & ~timer_pad_sel) | (timer_pad_val & timer_pad_sel);
-    wire [15:0] attoio_pad_oe  =  gpio_pad_oe | timer_pad_sel;
+    wire [NGPIO-1:0] attoio_pad_oe  =  gpio_pad_oe | timer_pad_sel;
 
     /* -------------------------------------------------------------------- */
     /*  Per-pad 4:1 output mux selecting between attoio drive and the       */
@@ -320,7 +330,7 @@ module attoio_macro (
     /*  PINMUX register inside attoio_ctrl.                                 */
     /* -------------------------------------------------------------------- */
     genvar gp;
-    generate for (gp = 0; gp < 16; gp = gp + 1) begin : g_padmux
+    generate for (gp = 0; gp < NGPIO; gp = gp + 1) begin : g_padmux
         wire [1:0] sel = pinmux[2*gp +: 2];
         reg po, poe;
         always @(*) begin
@@ -344,8 +354,8 @@ module attoio_macro (
     // Control — doorbells + IOP_CTRL + PINMUX + VERSION
     // ====================================================================
     wire irq_to_host_ctrl;
-    wire [31:0] pinmux;
-    attoio_ctrl u_ctrl (
+    wire [NGPIO*2-1:0] pinmux;
+    attoio_ctrl #(.NGPIO(NGPIO)) u_ctrl (
         .sysclk         (sysclk),
         .rst_n          (rst_n),
 
@@ -376,13 +386,13 @@ module attoio_macro (
     // ====================================================================
     // SPI shift helper — synchronize pad_in onto clk_iop first
     // ====================================================================
-    reg [15:0] pad_in_iop_sync;
+    reg [NGPIO-1:0] pad_in_iop_sync;
     always @(posedge clk_iop or negedge rst_n) begin
-        if (!rst_n) pad_in_iop_sync <= 16'h0;
+        if (!rst_n) pad_in_iop_sync <= {NGPIO{1'b0}};
         else        pad_in_iop_sync <= pad_in;
     end
 
-    attoio_spi u_spi (
+    attoio_spi #(.NGPIO(NGPIO)) u_spi (
         .clk_iop    (clk_iop),
         .rst_n      (rst_n),
 
@@ -405,7 +415,7 @@ module attoio_macro (
     // TIMER
     // ====================================================================
     wire timer_irq;
-    attoio_timer u_timer (
+    attoio_timer #(.NGPIO(NGPIO)) u_timer (
         .clk_iop       (clk_iop),
         .rst_n         (rst_n & ~iop_reset),
 

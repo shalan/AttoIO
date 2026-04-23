@@ -19,27 +19,38 @@
 // Clocked by clk_iop.
 /******************************************************************************/
 
-module attoio_spi (
-    input  wire        clk_iop,
-    input  wire        rst_n,
+module attoio_spi #(
+    parameter NGPIO = 16
+) (
+    input  wire                        clk_iop,
+    input  wire                        rst_n,
 
     // ---- MMIO interface (clk_iop) ----
-    input  wire [5:0]  mmio_woff,       // word offset within MMIO page
-    input  wire [31:0] mmio_wdata,
-    input  wire        mmio_wen,
-    output reg  [31:0] mmio_rdata,
-    input  wire        mmio_sel,        // 1 = addressing SPI range
+    input  wire [5:0]                  mmio_woff,
+    input  wire [31:0]                 mmio_wdata,
+    input  wire                        mmio_wen,
+    output reg  [31:0]                 mmio_rdata,
+    input  wire                        mmio_sel,
 
     // ---- GPIO pin sampling (synchronized pad_in, clk_iop domain) ----
-    input  wire [15:0] pad_in_sync,
+    input  wire [NGPIO-1:0]            pad_in_sync,
 
     // ---- Pin override outputs to attoio_gpio ----
-    output wire        spi_active,
-    output wire [3:0]  spi_sck_pin,
-    output wire [3:0]  spi_mosi_pin,
-    output wire        spi_sck_val,
-    output wire        spi_mosi_val
+    output wire                        spi_active,
+    output wire [$clog2(NGPIO)-1:0]    spi_sck_pin,
+    output wire [$clog2(NGPIO)-1:0]    spi_mosi_pin,
+    output wire                        spi_sck_val,
+    output wire                        spi_mosi_val
 );
+
+    initial begin
+        if (NGPIO != 8 && NGPIO != 16) begin
+            $display("attoio_spi: NGPIO must be 8 or 16, got %0d", NGPIO);
+            $fatal;
+        end
+    end
+
+    localparam PINW = $clog2(NGPIO);   // 3 or 4
 
     // Register word offsets (within MMIO page)
     localparam W_SPI_DATA   = 6'h24;   // 0x390 -> offset 0x90 -> word 0x24
@@ -50,9 +61,9 @@ module attoio_spi (
     // Configuration register
     // ====================================================================
     reg [7:0] spi_cfg;
-    wire [3:0] cfg_sck_pin  = spi_cfg[3:0];
-    wire [3:0] cfg_mosi_pin = {2'b00, spi_cfg[5:4]};
-    wire [3:0] cfg_miso_pin = cfg_mosi_pin + 4'd1;  // MISO = MOSI + 1
+    wire [PINW-1:0] cfg_sck_pin  = spi_cfg[PINW-1:0];
+    wire [PINW-1:0] cfg_mosi_pin = {{(PINW-2){1'b0}}, spi_cfg[5:4]};
+    wire [PINW-1:0] cfg_miso_pin = cfg_mosi_pin + {{(PINW-1){1'b0}}, 1'b1};
     wire       cfg_cpol     = spi_cfg[6];
     wire       cfg_cpha     = spi_cfg[7];
 

@@ -30,59 +30,68 @@
 // are required — the config value is coherent on every sysclk tick.
 /******************************************************************************/
 
-module attoio_gpio (
-    input  wire        sysclk,
-    input  wire        clk_iop,
-    input  wire        rst_n,
+module attoio_gpio #(
+    parameter NGPIO = 16
+) (
+    input  wire                    sysclk,
+    input  wire                    clk_iop,
+    input  wire                    rst_n,
 
     // ---- IOP MMIO bus (active on clk_iop) ----
-    input  wire [7:0]  mmio_addr,       // byte offset within 0x300 page
-    input  wire [31:0] mmio_wdata,
-    input  wire [3:0]  mmio_wmask,
-    input  wire        mmio_wen,        // write enable
-    input  wire        mmio_ren,        // read enable
-    output reg  [31:0] mmio_rdata,
+    input  wire [7:0]              mmio_addr,
+    input  wire [31:0]             mmio_wdata,
+    input  wire [3:0]              mmio_wmask,
+    input  wire                    mmio_wen,
+    input  wire                    mmio_ren,
+    output reg  [31:0]             mmio_rdata,
 
     // ---- Wake latch output (active on sysclk) ----
-    output wire        wake_latch,
+    output wire                    wake_latch,
 
     // ---- SPI pin override (from attoio_spi) ----
-    input  wire        spi_active,
-    input  wire [3:0]  spi_sck_pin,     // which GPIO pin is SCK
-    input  wire [3:0]  spi_mosi_pin,    // which GPIO pin is MOSI
-    input  wire        spi_sck_val,
-    input  wire        spi_mosi_val,
+    input  wire                    spi_active,
+    input  wire [$clog2(NGPIO)-1:0] spi_sck_pin,
+    input  wire [$clog2(NGPIO)-1:0] spi_mosi_pin,
+    input  wire                    spi_sck_val,
+    input  wire                    spi_mosi_val,
 
     // ---- Pad interface ----
-    input  wire [15:0] pad_in,
-    output wire [15:0] pad_out,
-    output wire [15:0] pad_oe,
-    output wire [127:0] pad_ctl
+    input  wire [NGPIO-1:0]        pad_in,
+    output wire [NGPIO-1:0]        pad_out,
+    output wire [NGPIO-1:0]        pad_oe,
+    output wire [NGPIO*8-1:0]      pad_ctl
 );
+
+    initial begin
+        if (NGPIO != 8 && NGPIO != 16) begin
+            $display("attoio_gpio: NGPIO must be 8 or 16, got %0d", NGPIO);
+            $fatal;
+        end
+    end
 
     // ====================================================================
     // GPIO registers (clk_iop domain)
     // ====================================================================
-    reg [15:0] gpio_out_r;
-    reg [15:0] gpio_oe_r;
+    reg [NGPIO-1:0] gpio_out_r;
+    reg [NGPIO-1:0] gpio_oe_r;
 
-    // PADCTL: 16 x 8 bits
-    reg [7:0] padctl_r [0:15];
+    // PADCTL: NGPIO x 8 bits
+    reg [7:0] padctl_r [0:NGPIO-1];
 
     integer k;
 
     // ====================================================================
     // Input synchronizers (sysclk domain) — 2-flop
     // ====================================================================
-    reg [15:0] pad_in_sync1;
-    reg [15:0] pad_in_sync2;
-    reg [15:0] pad_in_prev;     // for edge detection
+    reg [NGPIO-1:0] pad_in_sync1;
+    reg [NGPIO-1:0] pad_in_sync2;
+    reg [NGPIO-1:0] pad_in_prev;     // for edge detection
 
     always @(posedge sysclk or negedge rst_n) begin
         if (!rst_n) begin
-            pad_in_sync1 <= 16'h0;
-            pad_in_sync2 <= 16'h0;
-            pad_in_prev  <= 16'h0;
+            pad_in_sync1 <= {NGPIO{1'b0}};
+            pad_in_sync2 <= {NGPIO{1'b0}};
+            pad_in_prev  <= {NGPIO{1'b0}};
         end else begin
             pad_in_sync1 <= pad_in;
             pad_in_sync2 <= pad_in_sync1;
@@ -93,24 +102,22 @@ module attoio_gpio (
     // ====================================================================
     // Wake system (sysclk domain)
     // ====================================================================
-    //   WAKE_FLAGS[p]  sets when the configured edge on pad[p] occurs,
-    //                  cleared by W1C or by a legacy write to WAKE_LATCH.
-    //   WAKE_MASK[p]   per-pin enable. Wake contributes to the IRQ OR
-    //                  only if mask[p] = 1.
-    //   WAKE_EDGE[2p+1:2p]  00=off 01=rise 10=fall 11=both.
+    //   WAKE_FLAGS[p]       set on configured edge; cleared by W1C
+    //   WAKE_MASK[p]        per-pin enable into wake_latch OR
+    //   WAKE_EDGE[2p+1:2p]  00=off 01=rise 10=fall 11=both
     // ====================================================================
-    reg  [15:0] wake_flags_r;
-    reg  [15:0] wake_mask_r;
-    reg  [31:0] wake_edge_r;
+    reg  [NGPIO-1:0]     wake_flags_r;
+    reg  [NGPIO-1:0]     wake_mask_r;
+    reg  [NGPIO*2-1:0]   wake_edge_r;
 
     // Per-pin edge event computed on sysclk
-    wire [15:0] rise_evt = pad_in_sync2 & ~pad_in_prev;
-    wire [15:0] fall_evt = ~pad_in_sync2 &  pad_in_prev;
+    wire [NGPIO-1:0] rise_evt = pad_in_sync2 & ~pad_in_prev;
+    wire [NGPIO-1:0] fall_evt = ~pad_in_sync2 &  pad_in_prev;
 
-    reg  [15:0] wake_event;   // combinational: which pins had a qualifying edge
+    reg  [NGPIO-1:0] wake_event;
     integer     pi;
     always @(*) begin
-        for (pi = 0; pi < 16; pi = pi + 1) begin
+        for (pi = 0; pi < NGPIO; pi = pi + 1) begin
             case (wake_edge_r[2*pi +: 2])
                 2'b01:   wake_event[pi] = rise_evt[pi];
                 2'b10:   wake_event[pi] = fall_evt[pi];
@@ -123,16 +130,16 @@ module attoio_gpio (
     // W1C clear pulses from IOP — set for one clk_iop cycle when firmware
     // writes. Because clk_iop edges align with sysclk edges, sysclk picks
     // up the same cycle's value deterministically.
-    reg        wake_clear_all;    // legacy WAKE_LATCH write clears all flags
-    reg [15:0] wake_clear_mask;   // per-pin W1C on WAKE_FLAGS
+    reg              wake_clear_all;    // legacy WAKE_LATCH write clears all flags
+    reg [NGPIO-1:0]  wake_clear_mask;   // per-pin W1C on WAKE_FLAGS
 
     always @(posedge sysclk or negedge rst_n) begin
         if (!rst_n)
-            wake_flags_r <= 16'h0;
+            wake_flags_r <= {NGPIO{1'b0}};
         else begin
             // W1C takes priority, but sticky flags still set on same edge.
             wake_flags_r <= (wake_flags_r &
-                             ~(wake_clear_all ? 16'hFFFF : wake_clear_mask))
+                             ~(wake_clear_all ? {NGPIO{1'b1}} : wake_clear_mask))
                             | wake_event;
         end
     end
@@ -145,23 +152,24 @@ module attoio_gpio (
     wire [5:0] word_off = mmio_addr[7:2];
 
     // Word offsets within the MMIO page:
-    localparam W_GPIO_IN      = 6'h00;   // 0x300 -> offset 0x00
-    localparam W_GPIO_OUT     = 6'h01;   // 0x304 -> offset 0x04
-    localparam W_GPIO_OE      = 6'h02;   // 0x308 -> offset 0x08
-    localparam W_GPIO_OUT_SET = 6'h03;   // 0x30C -> offset 0x0C
-    localparam W_GPIO_OUT_CLR = 6'h04;   // 0x310 -> offset 0x10
-    localparam W_GPIO_OE_SET  = 6'h05;   // 0x314 -> offset 0x14
-    localparam W_GPIO_OE_CLR  = 6'h06;   // 0x318 -> offset 0x18
-    // PADCTL[0..15] at word offsets 0x08..0x17 (0x320..0x35C)
-    localparam W_PADCTL_BASE  = 6'h08;   // 0x320 -> offset 0x20
-    localparam W_PADCTL_END   = 6'h17;   // 0x35C -> offset 0x5C
-    localparam W_WAKE_LATCH   = 6'h18;   // 0x360 -> offset 0x60 (legacy RO + clear-all W1C)
-    localparam W_WAKE_FLAGS   = 6'h19;   // 0x364 -> per-pin sticky flags (R/W1C)
-    localparam W_WAKE_MASK    = 6'h1A;   // 0x368 -> per-pin enable (RW)
-    localparam W_WAKE_EDGE    = 6'h1B;   // 0x36C -> per-pin edge mode (RW)
+    localparam W_GPIO_IN      = 6'h00;
+    localparam W_GPIO_OUT     = 6'h01;
+    localparam W_GPIO_OE      = 6'h02;
+    localparam W_GPIO_OUT_SET = 6'h03;
+    localparam W_GPIO_OUT_CLR = 6'h04;
+    localparam W_GPIO_OE_SET  = 6'h05;
+    localparam W_GPIO_OE_CLR  = 6'h06;
+    // PADCTL[0..NGPIO-1] begins at word 0x08 (byte offset 0x20).
+    localparam W_PADCTL_BASE  = 6'h08;
+    localparam [5:0] W_PADCTL_END = 6'h08 + NGPIO - 1;  // 0x17 @ NGPIO=16, 0x0F @ 8
+    localparam W_WAKE_LATCH   = 6'h18;
+    localparam W_WAKE_FLAGS   = 6'h19;
+    localparam W_WAKE_MASK    = 6'h1A;
+    localparam W_WAKE_EDGE    = 6'h1B;
 
-    // PADCTL index
-    wire [3:0] padctl_idx = word_off[3:0]; // 0..15 within PADCTL range
+    // PADCTL index — low log2(NGPIO) bits of the word offset.
+    localparam PINW = $clog2(NGPIO);
+    wire [PINW-1:0] padctl_idx = word_off[PINW-1:0];
     wire padctl_sel = (word_off >= W_PADCTL_BASE) && (word_off <= W_PADCTL_END);
 
     // ====================================================================
@@ -169,31 +177,31 @@ module attoio_gpio (
     // ====================================================================
     always @(posedge clk_iop or negedge rst_n) begin
         if (!rst_n) begin
-            gpio_out_r      <= 16'h0;
-            gpio_oe_r       <= 16'h0;
+            gpio_out_r      <= {NGPIO{1'b0}};
+            gpio_oe_r       <= {NGPIO{1'b0}};
             wake_clear_all  <= 1'b0;
-            wake_clear_mask <= 16'h0;
-            wake_mask_r     <= 16'h0;
-            wake_edge_r     <= 32'h0;
-            for (k = 0; k < 16; k = k + 1)
+            wake_clear_mask <= {NGPIO{1'b0}};
+            wake_mask_r     <= {NGPIO{1'b0}};
+            wake_edge_r     <= {(NGPIO*2){1'b0}};
+            for (k = 0; k < NGPIO; k = k + 1)
                 padctl_r[k] <= 8'h0;
         end else begin
             // pulse defaults
             wake_clear_all  <= 1'b0;
-            wake_clear_mask <= 16'h0;
+            wake_clear_mask <= {NGPIO{1'b0}};
 
             if (mmio_wen) begin
                 case (word_off)
-                    W_GPIO_OUT:     gpio_out_r <= mmio_wdata[15:0];
-                    W_GPIO_OE:      gpio_oe_r  <= mmio_wdata[15:0];
-                    W_GPIO_OUT_SET: gpio_out_r <= gpio_out_r | mmio_wdata[15:0];
-                    W_GPIO_OUT_CLR: gpio_out_r <= gpio_out_r & ~mmio_wdata[15:0];
-                    W_GPIO_OE_SET:  gpio_oe_r  <= gpio_oe_r  | mmio_wdata[15:0];
-                    W_GPIO_OE_CLR:  gpio_oe_r  <= gpio_oe_r  & ~mmio_wdata[15:0];
-                    W_WAKE_LATCH:   wake_clear_all  <= 1'b1;        // legacy clear-all
-                    W_WAKE_FLAGS:   wake_clear_mask <= mmio_wdata[15:0]; // per-pin W1C
-                    W_WAKE_MASK:    wake_mask_r     <= mmio_wdata[15:0];
-                    W_WAKE_EDGE:    wake_edge_r     <= mmio_wdata;
+                    W_GPIO_OUT:     gpio_out_r <= mmio_wdata[NGPIO-1:0];
+                    W_GPIO_OE:      gpio_oe_r  <= mmio_wdata[NGPIO-1:0];
+                    W_GPIO_OUT_SET: gpio_out_r <= gpio_out_r | mmio_wdata[NGPIO-1:0];
+                    W_GPIO_OUT_CLR: gpio_out_r <= gpio_out_r & ~mmio_wdata[NGPIO-1:0];
+                    W_GPIO_OE_SET:  gpio_oe_r  <= gpio_oe_r  | mmio_wdata[NGPIO-1:0];
+                    W_GPIO_OE_CLR:  gpio_oe_r  <= gpio_oe_r  & ~mmio_wdata[NGPIO-1:0];
+                    W_WAKE_LATCH:   wake_clear_all  <= 1'b1;
+                    W_WAKE_FLAGS:   wake_clear_mask <= mmio_wdata[NGPIO-1:0];
+                    W_WAKE_MASK:    wake_mask_r     <= mmio_wdata[NGPIO-1:0];
+                    W_WAKE_EDGE:    wake_edge_r     <= mmio_wdata[NGPIO*2-1:0];
                     default: begin
                         if (padctl_sel)
                             padctl_r[padctl_idx] <= mmio_wdata[7:0];
@@ -206,20 +214,24 @@ module attoio_gpio (
     // ====================================================================
     // Reads (combinational, clk_iop domain)
     // ====================================================================
+    // Zero-pad widths (32 - NGPIO for most, 32 - 2*NGPIO for WAKE_EDGE).
+    localparam NPAD  = 32 - NGPIO;
+    localparam EPAD  = 32 - 2*NGPIO;
+
     always @(*) begin
         mmio_rdata = 32'h0;
         case (word_off)
-            W_GPIO_IN:      mmio_rdata = {16'h0, pad_in_sync2};
-            W_GPIO_OUT:     mmio_rdata = {16'h0, gpio_out_r};
-            W_GPIO_OE:      mmio_rdata = {16'h0, gpio_oe_r};
-            W_GPIO_OUT_SET: mmio_rdata = {16'h0, gpio_out_r};
-            W_GPIO_OUT_CLR: mmio_rdata = {16'h0, gpio_out_r};
-            W_GPIO_OE_SET:  mmio_rdata = {16'h0, gpio_oe_r};
-            W_GPIO_OE_CLR:  mmio_rdata = {16'h0, gpio_oe_r};
+            W_GPIO_IN:      mmio_rdata = {{NPAD{1'b0}}, pad_in_sync2};
+            W_GPIO_OUT:     mmio_rdata = {{NPAD{1'b0}}, gpio_out_r};
+            W_GPIO_OE:      mmio_rdata = {{NPAD{1'b0}}, gpio_oe_r};
+            W_GPIO_OUT_SET: mmio_rdata = {{NPAD{1'b0}}, gpio_out_r};
+            W_GPIO_OUT_CLR: mmio_rdata = {{NPAD{1'b0}}, gpio_out_r};
+            W_GPIO_OE_SET:  mmio_rdata = {{NPAD{1'b0}}, gpio_oe_r};
+            W_GPIO_OE_CLR:  mmio_rdata = {{NPAD{1'b0}}, gpio_oe_r};
             W_WAKE_LATCH:   mmio_rdata = {31'h0, wake_latch};
-            W_WAKE_FLAGS:   mmio_rdata = {16'h0, wake_flags_r};
-            W_WAKE_MASK:    mmio_rdata = {16'h0, wake_mask_r};
-            W_WAKE_EDGE:    mmio_rdata = wake_edge_r;
+            W_WAKE_FLAGS:   mmio_rdata = {{NPAD{1'b0}}, wake_flags_r};
+            W_WAKE_MASK:    mmio_rdata = {{NPAD{1'b0}}, wake_mask_r};
+            W_WAKE_EDGE:    mmio_rdata = {{EPAD{1'b0}}, wake_edge_r};
             default: begin
                 if (padctl_sel)
                     mmio_rdata = {24'h0, padctl_r[padctl_idx]};
@@ -230,7 +242,7 @@ module attoio_gpio (
     // ====================================================================
     // Pad outputs — SPI override when active
     // ====================================================================
-    reg [15:0] gpio_out_final;
+    reg [NGPIO-1:0] gpio_out_final;
     integer p;
     always @(*) begin
         gpio_out_final = gpio_out_r;
@@ -246,7 +258,7 @@ module attoio_gpio (
     // PADCTL flat output
     genvar g;
     generate
-        for (g = 0; g < 16; g = g + 1) begin : gen_padctl
+        for (g = 0; g < NGPIO; g = g + 1) begin : gen_padctl
             assign pad_ctl[g*8 +: 8] = padctl_r[g];
         end
     endgenerate

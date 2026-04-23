@@ -23,40 +23,49 @@
 // are a subset of sysclk edges — inherently safe, no synchronizer needed.
 /******************************************************************************/
 
-module attoio_ctrl (
-    input  wire        sysclk,
-    input  wire        rst_n,
+module attoio_ctrl #(
+    parameter NGPIO = 16
+) (
+    input  wire              sysclk,
+    input  wire              rst_n,
 
     // ---- Host-side interface (sysclk) ----
-    input  wire [7:0]  host_reg_addr,   // byte offset within 0x700 page
-    input  wire [31:0] host_reg_wdata,
-    input  wire [3:0]  host_reg_wstrb,  // byte strobes (from APB PSTRB)
-    input  wire        host_reg_wen,
-    input  wire        host_reg_ren,
-    output reg  [31:0] host_reg_rdata,
+    input  wire [7:0]        host_reg_addr,   // byte offset within 0x700 page
+    input  wire [31:0]       host_reg_wdata,
+    input  wire [3:0]        host_reg_wstrb,
+    input  wire              host_reg_wen,
+    input  wire              host_reg_ren,
+    output reg  [31:0]       host_reg_rdata,
 
     // ---- IOP-side MMIO interface (clk_iop, subset of sysclk) ----
-    input  wire [5:0]  iop_mmio_woff,   // word offset within MMIO page
-    input  wire [31:0] iop_mmio_wdata,
-    input  wire        iop_mmio_wen,
-    output reg  [31:0] iop_mmio_rdata,
-    input  wire        iop_mmio_sel,    // 1 = IOP addressing doorbell range
+    input  wire [5:0]        iop_mmio_woff,
+    input  wire [31:0]       iop_mmio_wdata,
+    input  wire              iop_mmio_wen,
+    output reg  [31:0]       iop_mmio_rdata,
+    input  wire              iop_mmio_sel,
 
     // ---- Wake latch input (from attoio_gpio) ----
-    input  wire        wake_latch,
+    input  wire              wake_latch,
 
     // ---- Outputs ----
-    output wire        iop_reset,       // to memmux + core reset
-    output wire        iop_nmi,         // to core nmi
-    output wire        iop_irq,         // to core interrupt_request
-    output wire        irq_to_host,     // IOP -> host interrupt
+    output wire              iop_reset,
+    output wire              iop_nmi,
+    output wire              iop_irq,
+    output wire              irq_to_host,
 
-    // ---- PINMUX bits out to macro pad mux ----
-    // 2 bits per pad, 16 pads: bit order = {pad15[1:0], ..., pad0[1:0]}.
-    output wire [31:0] pinmux
+    // ---- PINMUX bits out to macro pad mux (2 bits per pad) ----
+    output wire [NGPIO*2-1:0] pinmux
 );
 
+    initial begin
+        if (NGPIO != 8 && NGPIO != 16) begin
+            $display("attoio_ctrl: NGPIO must be 8 or 16, got %0d", NGPIO);
+            $fatal;
+        end
+    end
+
     localparam [31:0] ATTOIO_VERSION = 32'h0100_0000;  // v1.0.0
+    localparam PMW = NGPIO * 2;   // PINMUX total width (16 at NGPIO=8, 32 at =16)
 
     // ====================================================================
     // DOORBELL_H2C — host sets (W1S), IOP clears (W1C)
@@ -78,8 +87,11 @@ module attoio_ctrl (
     // ====================================================================
     // PINMUX
     // ====================================================================
+    // pinmux_r is always 32 bits internally (storage cheap). Only the
+    // low PMW bits drive the output. At NGPIO=8 the top 16 bits are
+    // writable but inert (they don't feed any mux).
     reg [31:0] pinmux_r;
-    assign pinmux = pinmux_r;
+    assign pinmux = pinmux_r[PMW-1:0];
 
     // ====================================================================
     // Host-side writes (sysclk)
@@ -113,13 +125,13 @@ module attoio_ctrl (
                             ctrl_nmi_pulse <= 1'b1;
                         end
                     end
-                    8'h10: begin // PINMUX_LO — pads 0-7 (low halfword)
-                        if (host_reg_wstrb[0]) pinmux_r[ 7: 0] <= host_reg_wdata[ 7: 0];
-                        if (host_reg_wstrb[1]) pinmux_r[15: 8] <= host_reg_wdata[15: 8];
+                    8'h10: begin // PINMUX_LO — pads 0..7 (bits [15:0])
+                        if (host_reg_wstrb[0]) pinmux_r[ 7: 0] <= host_reg_wdata[ 7:0];
+                        if (host_reg_wstrb[1]) pinmux_r[15: 8] <= host_reg_wdata[15:8];
                     end
-                    8'h14: begin // PINMUX_HI — pads 8-15 (low halfword)
-                        if (host_reg_wstrb[0]) pinmux_r[23:16] <= host_reg_wdata[ 7: 0];
-                        if (host_reg_wstrb[1]) pinmux_r[31:24] <= host_reg_wdata[15: 8];
+                    8'h14: begin // PINMUX_HI — pads 8..15 (bits [31:16], ignored at NGPIO=8)
+                        if (host_reg_wstrb[0]) pinmux_r[23:16] <= host_reg_wdata[ 7:0];
+                        if (host_reg_wstrb[1]) pinmux_r[31:24] <= host_reg_wdata[15:8];
                     end
                     default: ;
                 endcase

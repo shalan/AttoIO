@@ -33,29 +33,40 @@
 // override the normal GPIO_OUT path with timer_pad_val on that pin.
 /******************************************************************************/
 
-module attoio_timer (
-    input  wire        clk_iop,
-    input  wire        rst_n,
+module attoio_timer #(
+    parameter NGPIO = 16
+) (
+    input  wire              clk_iop,
+    input  wire              rst_n,
 
     // MMIO (slice of the 0x300 page; only responds when mmio_is_timer = 1)
-    input  wire [5:0]  mmio_woff,       // word offset within the MMIO page
-    input  wire [31:0] mmio_wdata,
-    input  wire [3:0]  mmio_wmask,      // unused — word writes only
-    input  wire        mmio_wen,
-    input  wire        mmio_ren,        // unused — read is combinational
-    output reg  [31:0] mmio_rdata,
+    input  wire [5:0]        mmio_woff,
+    input  wire [31:0]       mmio_wdata,
+    input  wire [3:0]        mmio_wmask,
+    input  wire              mmio_wen,
+    input  wire              mmio_ren,
+    output reg  [31:0]       mmio_rdata,
 
     // Synchronized pad inputs (from attoio_gpio.pad_in_sync_iop)
-    input  wire [15:0] pad_in_sync,
+    input  wire [NGPIO-1:0]  pad_in_sync,
 
     // Interrupt
-    output wire        timer_irq,
+    output wire              timer_irq,
 
     // Pad override — the macro top-level picks these up when
     // timer_pad_sel[p] is 1, using timer_pad_val[p] as the pad value.
-    output wire [15:0] timer_pad_sel,
-    output wire [15:0] timer_pad_val
+    output wire [NGPIO-1:0]  timer_pad_sel,
+    output wire [NGPIO-1:0]  timer_pad_val
 );
+
+    initial begin
+        if (NGPIO != 8 && NGPIO != 16) begin
+            $display("attoio_timer: NGPIO must be 8 or 16, got %0d", NGPIO);
+            $fatal;
+        end
+    end
+
+    localparam PINW = $clog2(NGPIO);
 
     // ================================================================
     // Addressing
@@ -74,12 +85,12 @@ module attoio_timer (
     // ================================================================
     // Counter + control
     // ================================================================
-    reg [23:0] cnt;
-    reg        en;
-    reg        auto_reload;
-    reg [3:0]  cap_pad_idx;
-    reg [1:0]  cap_edge;
-    reg        cap_irq_en;
+    reg [23:0]       cnt;
+    reg              en;
+    reg              auto_reload;
+    reg [PINW-1:0]   cap_pad_idx;
+    reg [1:0]        cap_edge;
+    reg              cap_irq_en;
 
     // ================================================================
     // Capture
@@ -88,7 +99,7 @@ module attoio_timer (
     reg        cap_flag;
 
     // Previous pad_in_sync, for edge detection on the selected pin
-    reg [15:0] pad_in_prev;
+    reg [NGPIO-1:0] pad_in_prev;
     wire       cap_pin       = pad_in_sync[cap_pad_idx];
     wire       cap_pin_prev  = pad_in_prev[cap_pad_idx];
     wire       cap_rise      = cap_pin & ~cap_pin_prev;
@@ -100,27 +111,27 @@ module attoio_timer (
     // ================================================================
     // Compare channels
     // ================================================================
-    reg [23:0] cmp_val       [0:3];
-    reg [3:0]  cmp_pad_idx   [0:3];
-    reg        cmp_en        [0:3];
-    reg        cmp_irq_en    [0:3];
-    reg        cmp_pad_tog   [0:3];
-    reg        cmp_flag      [0:3];
+    reg [23:0]       cmp_val       [0:3];
+    reg [PINW-1:0]   cmp_pad_idx   [0:3];
+    reg              cmp_en        [0:3];
+    reg              cmp_irq_en    [0:3];
+    reg              cmp_pad_tog   [0:3];
+    reg              cmp_flag      [0:3];
 
     // Per-pad timer output value (flip-flop per pad, toggled by compare
     // events). Also per-pad selection bitmap (OR of all cmp_pad_tog for
     // channels that target this pad).
-    reg  [15:0] pad_val_r;
-    wire [15:0] pad_sel_r;
+    reg  [NGPIO-1:0] pad_val_r;
+    wire [NGPIO-1:0] pad_sel_r;
 
     genvar p;
     generate
-        for (p = 0; p < 16; p = p + 1) begin : gen_pad_sel
+        for (p = 0; p < NGPIO; p = p + 1) begin : gen_pad_sel
             assign pad_sel_r[p] =
-                (cmp_en[0] && cmp_pad_tog[0] && cmp_pad_idx[0] == p[3:0]) ||
-                (cmp_en[1] && cmp_pad_tog[1] && cmp_pad_idx[1] == p[3:0]) ||
-                (cmp_en[2] && cmp_pad_tog[2] && cmp_pad_idx[2] == p[3:0]) ||
-                (cmp_en[3] && cmp_pad_tog[3] && cmp_pad_idx[3] == p[3:0]);
+                (cmp_en[0] && cmp_pad_tog[0] && cmp_pad_idx[0] == p[PINW-1:0]) ||
+                (cmp_en[1] && cmp_pad_tog[1] && cmp_pad_idx[1] == p[PINW-1:0]) ||
+                (cmp_en[2] && cmp_pad_tog[2] && cmp_pad_idx[2] == p[PINW-1:0]) ||
+                (cmp_en[3] && cmp_pad_tog[3] && cmp_pad_idx[3] == p[PINW-1:0]);
         end
     endgenerate
 
@@ -138,10 +149,10 @@ module attoio_timer (
     // ================================================================
     // Per-pad match aggregation (which pad toggles this cycle)
     // ================================================================
-    reg  [15:0] pad_toggle_mask;
+    reg  [NGPIO-1:0] pad_toggle_mask;
     integer ch;
     always @(*) begin
-        pad_toggle_mask = 16'h0;
+        pad_toggle_mask = {NGPIO{1'b0}};
         if (match0 && cmp_pad_tog[0]) pad_toggle_mask[cmp_pad_idx[0]] = 1'b1;
         if (match1 && cmp_pad_tog[1]) pad_toggle_mask[cmp_pad_idx[1]] = 1'b1;
         if (match2 && cmp_pad_tog[2]) pad_toggle_mask[cmp_pad_idx[2]] = 1'b1;
@@ -159,16 +170,16 @@ module attoio_timer (
             cnt         <= 24'h0;
             en          <= 1'b0;
             auto_reload <= 1'b0;
-            cap_pad_idx <= 4'h0;
+            cap_pad_idx <= {PINW{1'b0}};
             cap_edge    <= 2'b00;
             cap_irq_en  <= 1'b0;
             cap_val     <= 24'h0;
             cap_flag    <= 1'b0;
-            pad_in_prev <= 16'h0;
-            pad_val_r   <= 16'h0;
+            pad_in_prev <= {NGPIO{1'b0}};
+            pad_val_r   <= {NGPIO{1'b0}};
             for (i = 0; i < 4; i = i + 1) begin
                 cmp_val[i]     <= 24'h0;
-                cmp_pad_idx[i] <= 4'h0;
+                cmp_pad_idx[i] <= {PINW{1'b0}};
                 cmp_en[i]      <= 1'b0;
                 cmp_irq_en[i]  <= 1'b0;
                 cmp_pad_tog[i] <= 1'b0;
@@ -208,7 +219,7 @@ module attoio_timer (
                         en          <= mmio_wdata[0];
                         if (mmio_wdata[1]) cnt <= 24'h0;   // write-1 reset
                         auto_reload <= mmio_wdata[2];
-                        cap_pad_idx <= mmio_wdata[6:3];
+                        cap_pad_idx <= mmio_wdata[3 +: PINW];
                         cap_edge    <= mmio_wdata[8:7];
                         cap_irq_en  <= mmio_wdata[9];
                     end
@@ -222,28 +233,28 @@ module attoio_timer (
                     end
                     W_TIMER_CMP0: begin
                         cmp_val[0]     <= mmio_wdata[23:0];
-                        cmp_pad_idx[0] <= mmio_wdata[27:24];
+                        cmp_pad_idx[0] <= mmio_wdata[24 +: PINW];
                         cmp_en[0]      <= mmio_wdata[28];
                         cmp_irq_en[0]  <= mmio_wdata[29];
                         cmp_pad_tog[0] <= mmio_wdata[30];
                     end
                     W_TIMER_CMP1: begin
                         cmp_val[1]     <= mmio_wdata[23:0];
-                        cmp_pad_idx[1] <= mmio_wdata[27:24];
+                        cmp_pad_idx[1] <= mmio_wdata[24 +: PINW];
                         cmp_en[1]      <= mmio_wdata[28];
                         cmp_irq_en[1]  <= mmio_wdata[29];
                         cmp_pad_tog[1] <= mmio_wdata[30];
                     end
                     W_TIMER_CMP2: begin
                         cmp_val[2]     <= mmio_wdata[23:0];
-                        cmp_pad_idx[2] <= mmio_wdata[27:24];
+                        cmp_pad_idx[2] <= mmio_wdata[24 +: PINW];
                         cmp_en[2]      <= mmio_wdata[28];
                         cmp_irq_en[2]  <= mmio_wdata[29];
                         cmp_pad_tog[2] <= mmio_wdata[30];
                     end
                     W_TIMER_CMP3: begin
                         cmp_val[3]     <= mmio_wdata[23:0];
-                        cmp_pad_idx[3] <= mmio_wdata[27:24];
+                        cmp_pad_idx[3] <= mmio_wdata[24 +: PINW];
                         cmp_en[3]      <= mmio_wdata[28];
                         cmp_irq_en[3]  <= mmio_wdata[29];
                         cmp_pad_tog[3] <= mmio_wdata[30];
@@ -255,28 +266,58 @@ module attoio_timer (
     end
 
     // ================================================================
-    // Reads (combinational)
+    // Reads (combinational) — field-assigned to avoid width juggling
+    // across NGPIO values
     // ================================================================
     always @(*) begin
         mmio_rdata = 32'h0;
         case (mmio_woff)
             W_TIMER_CNT:    mmio_rdata = {8'h0, cnt};
-            W_TIMER_CTL:    mmio_rdata = {22'h0, cap_irq_en, cap_edge,
-                                          cap_pad_idx, auto_reload,
-                                          1'b0 /* reset is W1, reads 0 */,
-                                          en};
+            W_TIMER_CTL: begin
+                mmio_rdata = 32'h0;
+                mmio_rdata[0]         = en;
+                /* bit[1] is W1 reset — reads 0 */
+                mmio_rdata[2]         = auto_reload;
+                mmio_rdata[3 +: PINW] = cap_pad_idx;
+                mmio_rdata[7 +: 2]    = cap_edge;
+                mmio_rdata[9]         = cap_irq_en;
+            end
             W_TIMER_STATUS: mmio_rdata = {27'h0, cap_flag,
                                           cmp_flag[3], cmp_flag[2],
                                           cmp_flag[1], cmp_flag[0]};
             W_TIMER_CAP:    mmio_rdata = {8'h0, cap_val};
-            W_TIMER_CMP0:   mmio_rdata = {1'b0, cmp_pad_tog[0], cmp_irq_en[0],
-                                          cmp_en[0], cmp_pad_idx[0], cmp_val[0]};
-            W_TIMER_CMP1:   mmio_rdata = {1'b0, cmp_pad_tog[1], cmp_irq_en[1],
-                                          cmp_en[1], cmp_pad_idx[1], cmp_val[1]};
-            W_TIMER_CMP2:   mmio_rdata = {1'b0, cmp_pad_tog[2], cmp_irq_en[2],
-                                          cmp_en[2], cmp_pad_idx[2], cmp_val[2]};
-            W_TIMER_CMP3:   mmio_rdata = {1'b0, cmp_pad_tog[3], cmp_irq_en[3],
-                                          cmp_en[3], cmp_pad_idx[3], cmp_val[3]};
+            W_TIMER_CMP0: begin
+                mmio_rdata = 32'h0;
+                mmio_rdata[23:0]       = cmp_val[0];
+                mmio_rdata[24 +: PINW] = cmp_pad_idx[0];
+                mmio_rdata[28]         = cmp_en[0];
+                mmio_rdata[29]         = cmp_irq_en[0];
+                mmio_rdata[30]         = cmp_pad_tog[0];
+            end
+            W_TIMER_CMP1: begin
+                mmio_rdata = 32'h0;
+                mmio_rdata[23:0]       = cmp_val[1];
+                mmio_rdata[24 +: PINW] = cmp_pad_idx[1];
+                mmio_rdata[28]         = cmp_en[1];
+                mmio_rdata[29]         = cmp_irq_en[1];
+                mmio_rdata[30]         = cmp_pad_tog[1];
+            end
+            W_TIMER_CMP2: begin
+                mmio_rdata = 32'h0;
+                mmio_rdata[23:0]       = cmp_val[2];
+                mmio_rdata[24 +: PINW] = cmp_pad_idx[2];
+                mmio_rdata[28]         = cmp_en[2];
+                mmio_rdata[29]         = cmp_irq_en[2];
+                mmio_rdata[30]         = cmp_pad_tog[2];
+            end
+            W_TIMER_CMP3: begin
+                mmio_rdata = 32'h0;
+                mmio_rdata[23:0]       = cmp_val[3];
+                mmio_rdata[24 +: PINW] = cmp_pad_idx[3];
+                mmio_rdata[28]         = cmp_en[3];
+                mmio_rdata[29]         = cmp_irq_en[3];
+                mmio_rdata[30]         = cmp_pad_tog[3];
+            end
             default:        mmio_rdata = 32'h0;
         endcase
     end
