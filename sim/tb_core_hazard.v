@@ -113,16 +113,16 @@ module tb_core_hazard;
     end
 
     /* Firmware load + run. */
-    reg [31:0] fw_image [0:127];
+    reg [31:0] fw_image [0:255];
     integer i;
 
     initial begin
         $dumpfile("tb_core_hazard.vcd");
         $dumpvars(0, tb_core_hazard);
 
-        for (i = 0; i < 128; i = i + 1) fw_image[i] = 32'h00000013;
+        for (i = 0; i < 256; i = i + 1) fw_image[i] = 32'h00000013;
         $readmemh(`FW_HEX, fw_image);
-        for (i = 0; i < 128; i = i + 1) mem[i] = fw_image[i];
+        for (i = 0; i < 256; i = i + 1) mem[i] = fw_image[i];
 
         rst_n = 0;
         repeat (5) @(posedge clk_iop);

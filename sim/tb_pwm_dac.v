@@ -114,14 +114,14 @@ module tb_pwm_dac;
         prev_pad8 <= pad_out[8];
     end
 
-    reg [31:0] fw_image [0:127];
+    reg [31:0] fw_image [0:255];
     integer i;
 
     initial begin
         $dumpfile("tb_pwm_dac.vcd");
         $dumpvars(0, tb_pwm_dac);
 
-        for (i = 0; i < 128; i = i + 1) fw_image[i] = 32'h00000013;
+        for (i = 0; i < 256; i = i + 1) fw_image[i] = 32'h00000013;
         $readmemh(`FW_HEX, fw_image);
 
         PADDR = 0; PWDATA = 0; PSTRB = 0;
@@ -131,7 +131,7 @@ module tb_pwm_dac;
         repeat (5) @(posedge sysclk);
 
         $display("--- tb_pwm_dac: loading firmware ---");
-        for (i = 0; i < 128; i = i + 1)
+        for (i = 0; i < 256; i = i + 1)
             apb_write(i * 4, fw_image[i], 4'hF);
         apb_write(11'h708, 32'h0, 4'hF);
 

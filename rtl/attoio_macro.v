@@ -107,7 +107,7 @@ module attoio_macro (
 
     /* SRAM A banks */
     /* SRAM A (private, 512 B) */
-    wire [6:0]  sram_a_a0;  wire [31:0] sram_a_di0;
+    wire [7:0]  sram_a_a0;  wire [31:0] sram_a_di0;
     wire [3:0]  sram_a_we0; wire        sram_a_en0;
     wire [31:0] sram_a_do0;
 
@@ -184,9 +184,9 @@ module attoio_macro (
     );
 
     // ====================================================================
-    // SRAM A — three 128x32 DFFRAM banks (sysclk)
+    // SRAM A — single 256x32 DFFRAM (sysclk, 1 KB, Phase 1.0)
     // ====================================================================
-    DFFRAM #(.WORDS(128), .WSIZE(4)) u_sram_a (
+    DFFRAM #(.WORDS(256), .WSIZE(4)) u_sram_a (
         .CLK (sysclk),
         .WE0 (sram_a_we0),
         .EN0 (sram_a_en0),

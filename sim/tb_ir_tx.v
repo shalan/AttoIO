@@ -108,7 +108,7 @@ module tb_ir_tx;
         prev_pad8 <= pad_out[8];
     end
 
-    reg [31:0] fw_image [0:127];
+    reg [31:0] fw_image [0:255];
     integer i;
     integer header_mark_ns, header_space_ns;
     integer space_ns;
@@ -118,7 +118,7 @@ module tb_ir_tx;
         $dumpfile("tb_ir_tx.vcd");
         $dumpvars(0, tb_ir_tx);
 
-        for (i = 0; i < 128; i = i + 1) fw_image[i] = 32'h00000013;
+        for (i = 0; i < 256; i = i + 1) fw_image[i] = 32'h00000013;
         $readmemh(`FW_HEX, fw_image);
 
         PADDR = 0; PWDATA = 0; PSTRB = 0;
@@ -128,7 +128,7 @@ module tb_ir_tx;
         repeat (5) @(posedge sysclk);
 
         $display("--- tb_ir_tx: loading firmware ---");
-        for (i = 0; i < 128; i = i + 1)
+        for (i = 0; i < 256; i = i + 1)
             apb_write(i * 4, fw_image[i], 4'hF);
         apb_write(11'h708, 32'h0, 4'hF);
 

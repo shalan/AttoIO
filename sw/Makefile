@@ -83,7 +83,7 @@ $(OUT_DIR)/$(FW).hex: $(OUT_DIR)/$(FW).bin
 
 size: $(OUT_DIR)/$(FW).elf
 	@$(SIZE) $<
-	@echo "max SRAM A = 512 B (code + data + bss + stack), Phase 0.9 layout"
+	@echo "max SRAM A = 1024 B (code + data + bss + stack), Phase 1.0 layout"
 
 dump: $(OUT_DIR)/$(FW).elf
 	$(OBJDUMP) -d $< | less

@@ -1,17 +1,17 @@
 /******************************************************************************/
-// attoio_memmux — v2.2: 11-bit address space, single-bank SRAM A,
-// single-bank mailbox SRAM B (Phase 0.9 downsize).
+// attoio_memmux — v3.0: 11-bit address space, single-bank SRAM A (1 KB),
+// single-bank mailbox SRAM B (Phase 1.0 restore).
 //
 // Memory map (11-bit byte address):
-//   0x000 – 0x1FF  SRAM A   (128x32 DFFRAM, 512 B)
+//   0x000 – 0x3FF  SRAM A   (256x32 DFFRAM, 1024 B)
 //   0x600 – 0x67F  SRAM B   (32x32 DFFRAM,  128 B)  mailbox
 //   0x700 – 0x7FF  MMIO page (256 B, combinational slave)
 //
-// Addresses 0x200–0x5FF (the banks removed in Phase 0.8 and 0.9) and
-// 0x680–0x6FF are unmapped — reads return 0, writes drop silently.
+// Addresses 0x400–0x5FF and 0x680–0x6FF are unmapped — reads return 0,
+// writes drop silently.
 //
 // Address decode:
-//   addr[10:9]  = 00      -> SRAM A (single bank, 512 B)
+//   addr[10]    = 0       -> SRAM A (single bank, 1024 B)
 //   addr[10:7]  = 4'b1100 -> SRAM B (single bank, 128 B)
 //   addr[10:8]  = 3'b111  -> MMIO page
 //
@@ -53,8 +53,8 @@ module attoio_memmux (
     output wire        mmio_sel,
     input  wire [31:0] mmio_rdata,
 
-    /* ---- SRAM A (single RAM128 instance) ---- */
-    output wire [6:0]  sram_a_a0,
+    /* ---- SRAM A (single RAM256 instance) ---- */
+    output wire [7:0]  sram_a_a0,
     output wire [31:0] sram_a_di0,
     output wire [3:0]  sram_a_we0,
     output wire        sram_a_en0,
@@ -71,29 +71,29 @@ module attoio_memmux (
     /* ============================================================== */
     /*  Address decode                                                */
     /* ============================================================== */
-    wire core_sel_a    = (core_addr[10:9] == 2'b00);     /* 0x000–0x1FF */
-    wire core_sel_b    = (core_addr[10:7] == 4'b1100);   /* 0x600–0x67F */
-    wire core_sel_mmio = (core_addr[10:8] == 3'b111);    /* 0x700–0x7FF */
+    wire core_sel_a    = (core_addr[10]    == 1'b0);     /* 0x000–0x3FF */
+    wire core_sel_b    = (core_addr[10:7]  == 4'b1100);  /* 0x600–0x67F */
+    wire core_sel_mmio = (core_addr[10:8]  == 3'b111);   /* 0x700–0x7FF */
 
     assign mmio_sel = core_sel_mmio;
 
     wire core_active = core_rstrb | (|core_wmask);
     wire core_req_b  = core_active & core_sel_b;
 
-    wire host_sel_a   = (host_addr[10:9] == 2'b00);
-    wire host_sel_b   = (host_addr[10:7] == 4'b1100);
-    wire host_sel_reg = (host_addr[10:8] == 3'b111);
+    wire host_sel_a   = (host_addr[10]    == 1'b0);
+    wire host_sel_b   = (host_addr[10:7]  == 4'b1100);
+    wire host_sel_reg = (host_addr[10:8]  == 3'b111);
 
     wire host_active = host_wen | host_ren;
     wire host_req_a  = host_active & host_sel_a & iop_reset;
     wire host_req_b  = host_active & host_sel_b;
 
     /* ============================================================== */
-    /*  SRAM A port mux (single bank)                                  */
+    /*  SRAM A port mux (single bank, 256 words)                       */
     /*   - During iop_reset, the host drives it (FW load path).        */
     /*   - After reset release, the core drives it exclusively.        */
     /* ============================================================== */
-    wire [6:0]  a_word_addr = iop_reset ? host_addr[8:2] : core_addr[8:2];
+    wire [7:0]  a_word_addr = iop_reset ? host_addr[9:2] : core_addr[9:2];
     wire [31:0] a_wdata     = iop_reset ? host_wdata     : core_wdata;
 
     wire a_en_host = host_req_a;
