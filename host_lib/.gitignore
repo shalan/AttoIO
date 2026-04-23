@@ -1,0 +1,3 @@
+*.o
+*.a
+host_smoke_test
