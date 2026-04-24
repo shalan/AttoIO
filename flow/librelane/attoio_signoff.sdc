@@ -1,19 +1,12 @@
-# AttoIO macro — PnR/signoff SDC (v1.3).
+# AttoIO macro — signoff SDC (v1.3).
 #
-# Relaxed from 60/30 MHz to 50/25 MHz so that all three corners
-# (TT 1v80, FF 1v95, SS 1v60) meet with positive slack.  At v1.2
-# numbers the SS corner had period_min = 37.19 ns (clk_iop) and
-# 16.86 ns (sysclk); moving targets to 40 ns / 20 ns gives +2.8 / +3.1 ns
-# margin at SS respectively.
+# True operating-envelope clocks reported in the contract.  The PnR
+# flow is over-constrained via attoio_pnr.sdc; this file is used by
+# the signoff STA step so the final numbers reflect actual running
+# targets, not over-constraints.
 #
-#   sysclk  = 50 MHz host bus                (period 20.0  ns)
-#   clk_iop = 25 MHz IO-pad domain           (period 40.0  ns)
-#
-# Assumptions:
-#   - 150 ps setup + hold uncertainty on both clocks
-#   - 3.5 % timing derate (OCV)
-#   - clock groups asynchronous
-#   - I/O delays scaled to 25 % of each clock's period
+#   sysclk  = 50 MHz  (20.0 ns)
+#   clk_iop = 25 MHz  (40.0 ns)
 
 set ::env(CLOCK_PERIOD_SYSCLK)  20.000
 set ::env(CLOCK_PERIOD_CLKIOP)  40.000
@@ -26,22 +19,21 @@ set_clock_groups -asynchronous \
     -group [get_clocks sysclk]  \
     -group [get_clocks clk_iop]
 
-# 150 ps setup + hold uncertainty (both clocks)
 set_clock_uncertainty -setup 0.150 [get_clocks sysclk]
 set_clock_uncertainty -hold  0.150 [get_clocks sysclk]
 set_clock_uncertainty -setup 0.150 [get_clocks clk_iop]
 set_clock_uncertainty -hold  0.150 [get_clocks clk_iop]
 
-# Clock transition
 set_clock_transition 0.150 [all_clocks]
 
 # ---------------------------------------------------------------- derate ----
-# 3.5 % OCV derate (applies to all corners; LibreLane runs each corner separately)
 set_timing_derate -early 0.965
 set_timing_derate -late  1.035
 
 # ---------------------------------------------------------- input/output ----
-# Host bus (APB) — 25 % of 20 ns sysclk period = 5 ns
+# Min input delay uniformly 2 ns on all inputs.
+# Max input delay scaled to 25 % of each clock's period.
+
 set host_inputs  [list \
     rst_n PADDR PSEL PENABLE PWRITE PWDATA PSTRB]
 set host_outputs [list PRDATA PREADY PSLVERR irq_to_host]
@@ -56,22 +48,19 @@ foreach p $host_outputs {
     set_output_delay -clock sysclk -min 2.0 [get_ports $p]
 }
 
-# Pad domain (clk_iop) — 25 % of 40 ns = 10 ns
 set pad_inputs  [list pad_in]
 set pad_outputs [list pad_out pad_oe pad_ctl]
 
 foreach p $pad_inputs {
     set_input_delay  -clock clk_iop -max 10.0 [get_ports $p]
-    set_input_delay  -clock clk_iop -min 3.0  [get_ports $p]
+    set_input_delay  -clock clk_iop -min 2.0  [get_ports $p]
 }
 
 foreach p $pad_outputs {
     set_output_delay -clock clk_iop -max 10.0 [get_ports $p]
-    set_output_delay -clock clk_iop -min 3.0  [get_ports $p]
+    set_output_delay -clock clk_iop -min 2.0  [get_ports $p]
 }
 
 # ----------------------------------------------------- drives and loads -----
-# Driving cell for all inputs: inv_2
 set_driving_cell -lib_cell sky130_fd_sc_hd__inv_2 -pin Y [all_inputs]
-# Output load: 17.5 fF (default sky130 pad estimate)
 set_load 0.0175 [all_outputs]
