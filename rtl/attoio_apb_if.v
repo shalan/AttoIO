@@ -8,7 +8,7 @@
 // SRAM accesses.
 //
 // Parameter widths:
-//   PADDR = 11 bits -> 2 KB address space (matches v2 memory map)
+//   PADDR = ADDR_WIDTH bits  (11 for DFFRAM variant, 13 for CFSRAM)
 //   PWDATA/PRDATA = 32 bits
 //   PSTRB = 4 bits (byte-enable; routed 1:1 to host_wmask)
 //
@@ -18,29 +18,31 @@
 
 `default_nettype none
 
-module attoio_apb_if (
-    input  wire        PCLK,
-    input  wire        PRESETn,
+module attoio_apb_if #(
+    parameter ADDR_WIDTH = 11
+) (
+    input  wire                   PCLK,
+    input  wire                   PRESETn,
 
     // ---- APB4 slave ----
-    input  wire [10:0] PADDR,
-    input  wire        PSEL,
-    input  wire        PENABLE,
-    input  wire        PWRITE,
-    input  wire [31:0] PWDATA,
-    input  wire [3:0]  PSTRB,
-    output wire [31:0] PRDATA,
-    output wire        PREADY,
-    output wire        PSLVERR,
+    input  wire [ADDR_WIDTH-1:0]  PADDR,
+    input  wire                   PSEL,
+    input  wire                   PENABLE,
+    input  wire                   PWRITE,
+    input  wire [31:0]            PWDATA,
+    input  wire [3:0]             PSTRB,
+    output wire [31:0]            PRDATA,
+    output wire                   PREADY,
+    output wire                   PSLVERR,
 
     // ---- Internal "host bus" to memmux ----
-    output wire [10:0] host_addr,
-    output wire [31:0] host_wdata,
-    output wire [3:0]  host_wmask,
-    output wire        host_wen,
-    output wire        host_ren,
-    input  wire [31:0] host_rdata,
-    input  wire        host_ready
+    output wire [ADDR_WIDTH-1:0]  host_addr,
+    output wire [31:0]            host_wdata,
+    output wire [3:0]             host_wmask,
+    output wire                   host_wen,
+    output wire                   host_ren,
+    input  wire [31:0]            host_rdata,
+    input  wire                   host_ready
 );
 
     wire access = PSEL & PENABLE;

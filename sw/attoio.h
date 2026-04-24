@@ -14,13 +14,25 @@
 #include <stdint.h>
 
 /* ------------------------------------------------------------------ */
-/*  Memory map (v2, 11-bit address space)                             */
-/*    0x000 – 0x5FF  1536 B  SRAM A (code + data + stack)             */
-/*    0x600 – 0x6FF   256 B  SRAM B (mailbox)                         */
+/*  Memory map                                                        */
+/*                                                                    */
+/*  DFFRAM variant (default, 11-bit address space):                   */
+/*    0x000 – 0x3FF  1024 B  SRAM A (code + data + stack)             */
+/*    0x600 – 0x67F   128 B  SRAM B (mailbox)                         */
 /*    0x700 – 0x7FF   256 B  MMIO page                                */
+/*                                                                    */
+/*  CFSRAM variant (ATTOIO_CFSRAM, 13-bit address space):             */
+/*    0x0000 – 0x0FFF  4096 B  SRAM A (CF_SRAM_1024x32 hard macro)    */
+/*    0x1400 – 0x147F   128 B  SRAM B (mailbox, DFFRAM)               */
+/*    0x1700 – 0x17FF   256 B  MMIO page                              */
 /* ------------------------------------------------------------------ */
-#define ATTOIO_MMIO_BASE    0x00000700u
-#define ATTOIO_MAILBOX_BASE 0x00000600u
+#ifdef ATTOIO_CFSRAM
+    #define ATTOIO_MMIO_BASE    0x00001700u
+    #define ATTOIO_MAILBOX_BASE 0x00001400u
+#else
+    #define ATTOIO_MMIO_BASE    0x00000700u
+    #define ATTOIO_MAILBOX_BASE 0x00000600u
+#endif
 
 /* ------------------------------------------------------------------ */
 /*  GPIO                                                              */

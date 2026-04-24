@@ -1,20 +1,39 @@
 # AttoIO firmware build.
 #
 # Usage:
-#   make FW=<name>        -> build build/<name>.elf  + .bin + .hex
-#   make clean
+#   make FW=<name>                       -> default DFFRAM variant (1 KB RAM_A)
+#   make FW=<name> VARIANT=cfsram        -> CFSRAM variant (4 KB RAM_A)
+#   make clean FW=<name>                 -> wipe this app's out dir
 #
 # Defaults:
-#   FW ?= empty           (picks up sw/empty/main.c)
+#   FW      ?= empty             (picks up sw/empty/main.c)
+#   VARIANT ?= dffram            (uses link.ld; link_cfsram.ld for cfsram)
 #
 # Layout assumed per firmware:
 #   sw/<name>/main.c       (plus optional .c/.S/.h siblings)
 #   sw/<name>/config.h     (optional; pin map, constants)
 
 FW           ?= empty
+VARIANT      ?= dffram
 BUILD_DIR    ?= build
 FW_DIR       := $(CURDIR)/$(FW)
-OUT_DIR      := $(CURDIR)/../build/sw/$(FW)
+# Keep default (dffram) output path compatible with v1.x sim/run_*.sh.
+# CFSRAM variant gets its own subdir so the two can coexist on disk.
+ifeq ($(VARIANT),cfsram)
+    OUT_DIR  := $(CURDIR)/../build/sw/cfsram/$(FW)
+else
+    OUT_DIR  := $(CURDIR)/../build/sw/$(FW)
+endif
+
+ifeq ($(VARIANT),cfsram)
+    LINK_SCRIPT    := $(CURDIR)/link_cfsram.ld
+    SIZE_BUDGET    := "max SRAM A = 4096 B (CFSRAM variant)"
+    VARIANT_DEFINE := -DATTOIO_CFSRAM
+else
+    LINK_SCRIPT    := $(CURDIR)/link.ld
+    SIZE_BUDGET    := "max SRAM A = 1024 B (DFFRAM variant)"
+    VARIANT_DEFINE :=
+endif
 
 # ---- Toolchain ---------------------------------------------------------
 CROSS   ?= riscv64-unknown-elf-
@@ -31,13 +50,14 @@ CFLAGS   = -march=$(MARCH) -mabi=$(MABI) \
            -Os -g3 -ffunction-sections -fdata-sections \
            -fno-builtin -ffreestanding \
            -Wall -Wextra -Wno-unused-parameter -Wno-array-bounds \
+           $(VARIANT_DEFINE) \
            -I$(CURDIR) -I$(CURDIR)/common -I$(FW_DIR)
 
 ASFLAGS  = -march=$(MARCH) -mabi=$(MABI)
 
 LDFLAGS  = -march=$(MARCH) -mabi=$(MABI) \
            -nostartfiles -nostdlib \
-           -Wl,-T,$(CURDIR)/link.ld \
+           -Wl,-T,$(LINK_SCRIPT) \
            -Wl,--gc-sections -Wl,-Map=$(OUT_DIR)/$(FW).map
 
 # ---- Sources -----------------------------------------------------------
@@ -66,7 +86,7 @@ $(OUT_DIR)/%.o: %.c | $(OUT_DIR)
 $(OUT_DIR)/%.o: %.S | $(OUT_DIR)
 	$(CC) $(ASFLAGS) -c $< -o $@
 
-$(OUT_DIR)/$(FW).elf: $(OBJS) $(CURDIR)/link.ld | $(OUT_DIR)
+$(OUT_DIR)/$(FW).elf: $(OBJS) $(LINK_SCRIPT) | $(OUT_DIR)
 	$(LD) $(LDFLAGS) $(OBJS) -o $@
 
 $(OUT_DIR)/$(FW).bin: $(OUT_DIR)/$(FW).elf
@@ -83,7 +103,7 @@ $(OUT_DIR)/$(FW).hex: $(OUT_DIR)/$(FW).bin
 
 size: $(OUT_DIR)/$(FW).elf
 	@$(SIZE) $<
-	@echo "max SRAM A = 1024 B (code + data + bss + stack), Phase 1.0 layout"
+	@echo $(SIZE_BUDGET)
 
 dump: $(OUT_DIR)/$(FW).elf
 	$(OBJDUMP) -d $< | less
