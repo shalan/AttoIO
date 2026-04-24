@@ -14,6 +14,8 @@
         "dir::../../../frv32/rtl/attorv32.v"
     ],
 
+    "SYNTH_STRATEGY": "DELAY 0",
+
     "VERILOG_DEFINES": [
         "NRV_SINGLE_PORT_REGF",
         "NRV_SHARED_ADDER",
@@ -27,18 +29,20 @@
     "SIGNOFF_SDC_FILE": "dir::attoio.sdc",
 
     "FP_SIZING":       "absolute",
-    "DIE_AREA":        "0 0 1000 500",
+    "DIE_AREA":        "0 0 1200 700",
     "FP_CORE_MARGIN":  5,
 
     "PL_TARGET_DENSITY": 0.60,
-    "PL_RESIZER_HOLD_SLACK_MARGIN":  0.1,
-    "PL_RESIZER_SETUP_SLACK_MARGIN": 0.0,
-    "GRT_RESIZER_HOLD_SLACK_MARGIN":  0.1,
-    "GRT_RESIZER_SETUP_SLACK_MARGIN": 0.0,
-    "DESIGN_REPAIR_MAX_WIRE_LENGTH":  300,
-    "CTS_DISTANCE_BETWEEN_BUFFERS":   100,
+    "PL_RESIZER_HOLD_SLACK_MARGIN":  0.00,
+    "PL_RESIZER_SETUP_SLACK_MARGIN": 0.00,
+    "RUN_POST_GRT_RESIZER_TIMING":   true,
+    "GRT_RESIZER_HOLD_SLACK_MARGIN": 0.15,
+    "GRT_RESIZER_SETUP_SLACK_MARGIN":0.05,
+    "DESIGN_REPAIR_MAX_WIRE_LENGTH": 400,
+    "CTS_DISTANCE_BETWEEN_BUFFERS":  200,
 
-    "FP_PIN_ORDER_CFG": "dir::pin_order.cfg",
+    "FP_PIN_ORDER_CFG":        "dir::pin_order.cfg",
+    "SYNTH_EXCLUDED_CELL_FILE": "dir::../../syn/synth_exclude.txt",
 
     "GRT_ANTENNA_REPAIR_ITERS": 4,
     "DRT_ANTENNA_REPAIR_ITERS": 4,
