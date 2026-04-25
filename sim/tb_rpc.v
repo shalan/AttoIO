@@ -11,6 +11,7 @@
 /******************************************************************************/
 
 `timescale 1ns/1ps
+`include "attoio_variant.vh"
 
 module tb_rpc;
 
@@ -18,7 +19,7 @@ module tb_rpc;
     reg         clk_iop = 0;
     reg         rst_n = 0;
 
-    reg  [10:0] PADDR = 0;
+    reg  [`AW-1:0] PADDR = 0;
     reg         PSEL = 0, PENABLE = 0, PWRITE = 0;
     reg  [31:0] PWDATA = 0;
     reg  [3:0]  PSTRB = 0;
@@ -40,7 +41,7 @@ module tb_rpc;
         div_cnt <= (div_cnt == CLK_DIV - 1) ? 0 : div_cnt + 1;
     end
 
-    attoio_macro u_dut (
+    `DUT_MOD u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
         .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
         .PWDATA(PWDATA), .PSTRB(PSTRB),
@@ -53,7 +54,7 @@ module tb_rpc;
     );
 
     // ---------- APB driver ----------
-    task apb_write(input [10:0] a, input [31:0] d, input [3:0] s);
+    task apb_write(input [`AW-1:0] a, input [31:0] d, input [3:0] s);
         begin
             @(posedge sysclk); #1;
             PADDR = a; PWDATA = d; PSTRB = s; PWRITE = 1; PSEL = 1;
@@ -65,7 +66,7 @@ module tb_rpc;
         end
     endtask
 
-    task apb_read(input [10:0] a, output [31:0] d);
+    task apb_read(input [`AW-1:0] a, output [31:0] d);
         begin
             @(posedge sysclk); #1;
             PADDR = a; PWRITE = 0; PSEL = 1;
@@ -80,10 +81,10 @@ module tb_rpc;
 
     // Mailbox helpers (host-visible mailbox is at PADDR 0x600)
     task mbx_write(input [4:0] wi, input [31:0] d);
-        apb_write(11'h600 + (wi << 2), d, 4'hF);
+        apb_write(`MBX(11'h000) + (wi << 2), d, 4'hF);
     endtask
     task mbx_read(input [4:0] wi, output [31:0] d);
-        apb_read(11'h600 + (wi << 2), d);
+        apb_read(`MBX(11'h000) + (wi << 2), d);
     endtask
 
     // ---------- RPC helper ----------
@@ -103,13 +104,13 @@ module tb_rpc;
             mbx_write(5'd3, a1);
             mbx_write(5'd1, {8'h01, 8'h00, grp, op});
             mbx_write(5'd0, RPC_REQ);                  // sentinel LAST
-            apb_write(11'h700, 32'h1, 4'hF);           // ring HOST_DOORBELL
+            apb_write(`REG(11'h000), 32'h1, 4'hF);           // ring HOST_DOORBELL
 
             // Wait for DOORBELL_C2H (IOP -> host) to go high.
             waited = 0;
             db_c2h = 32'h0;
             while (!db_c2h[0] && waited < 2000) begin
-                apb_read(11'h704, db_c2h);             // DOORBELL_C2H
+                apb_read(`REG(11'h004), db_c2h);             // DOORBELL_C2H
                 waited = waited + 1;
             end
             if (!db_c2h[0]) begin
@@ -119,7 +120,7 @@ module tb_rpc;
             // Collect status + reply, then W1C the C2H bit.
             mbx_read(5'd31, status);
             mbx_read(5'd2,  r0);
-            apb_write(11'h704, 32'h1, 4'hF);           // W1C DOORBELL_C2H
+            apb_write(`REG(11'h004), 32'h1, 4'hF);           // W1C DOORBELL_C2H
         end
     endtask
 
@@ -154,7 +155,7 @@ module tb_rpc;
             apb_write(i * 4, fw_image[i], 4'hF);
 
         $display("--- releasing IOP reset ---");
-        apb_write(11'h708, 32'h0, 4'hF);   // IOP_CTRL.reset = 0
+        apb_write(`REG(11'h008), 32'h0, 4'hF);   // IOP_CTRL.reset = 0
 
         // Wait for firmware live sentinel (mbox[30])
         begin : wait_boot

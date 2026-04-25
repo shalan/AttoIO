@@ -13,6 +13,7 @@
 /******************************************************************************/
 
 `timescale 1ns/1ps
+`include "attoio_variant.vh"
 
 `ifndef FW_HEX
  `define FW_HEX "build/sw/onewire/onewire.hex"
@@ -27,7 +28,7 @@ module tb_onewire;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [10:0] PADDR;
+    reg  [`AW-1:0] PADDR;
     reg         PSEL, PENABLE, PWRITE;
     reg  [31:0] PWDATA;
     reg  [3:0]  PSTRB;
@@ -59,7 +60,7 @@ module tb_onewire;
         div_cnt <= (div_cnt == CLK_DIV - 1) ? 0 : div_cnt + 1;
     end
 
-    attoio_macro u_dut (
+    `DUT_MOD u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
         .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
         .PWDATA(PWDATA), .PSTRB(PSTRB),
@@ -78,7 +79,7 @@ module tb_onewire;
 
 `include "apb_host.vh"
 
-    task wait_for_mailbox(input [10:0] addr, input [31:0] expected,
+    task wait_for_mailbox(input [`AW-1:0] addr, input [31:0] expected,
                           input integer max_tries);
         integer tries;
         reg [31:0] val;
@@ -128,14 +129,14 @@ module tb_onewire;
         $display("--- tb_onewire: loading firmware ---");
         for (i = 0; i < 256; i = i + 1)
             apb_write(i * 4, fw_image[i], 4'hF);
-        apb_write(11'h708, 32'h0, 4'hF);
+        apb_write(`REG(11'h008), 32'h0, 4'hF);
 
         /* FW writes the arm sentinel AFTER the whole 1-Wire sequence
          * completes, so waiting on it is a straightforward handshake. */
-        wait_for_mailbox(11'h608, 32'hC0DEC0DE, 2000000);
+        wait_for_mailbox(`MBX(11'h008), 32'hC0DEC0DE, 2000000);
         $display("  firmware finished 1-Wire sequence");
 
-        apb_read(11'h604, rd);
+        apb_read(`MBX(11'h004), rd);
         $display("  presence = %0d  (expect 1)", rd);
         if (rd !== 32'h1) begin
             $display("FAIL: no presence pulse detected");
@@ -147,7 +148,7 @@ module tb_onewire;
             integer bad;
             bad = 0;
             for (i = 0; i < 9; i = i + 1) begin
-                apb_read(11'h614 + (i * 4), rd);
+                apb_read(`MBX(11'h014) + (i * 4), rd);
                 $display("  scratch[%0d] = %02h  (expect %02h)",
                          i, rd[7:0], expect_scratch[i]);
                 if (rd[7:0] !== expect_scratch[i]) bad = bad + 1;
@@ -159,7 +160,7 @@ module tb_onewire;
         end
 
         /* Temperature = little-endian byte[1]:byte[0] at mailbox[4]. */
-        apb_read(11'h610, rd);
+        apb_read(`MBX(11'h010), rd);
         $display("  temperature word = %04h  (expect 0x0191 = 25.0625 °C)", rd[15:0]);
         if (rd[15:0] !== 16'h0191) begin
             $display("FAIL: temperature mismatch");

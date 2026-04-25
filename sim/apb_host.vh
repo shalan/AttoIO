@@ -26,7 +26,7 @@
 // ------------------------------------------------------------------------
 
 task apb_write;
-    input [10:0] addr;
+    input [`AW-1:0] addr;
     input [31:0] data;
     input [3:0]  strb;
     begin
@@ -51,7 +51,7 @@ task apb_write;
 endtask
 
 task apb_read;
-    input  [10:0] addr;
+    input  [`AW-1:0] addr;
     output [31:0] data;
     begin
         @(posedge sysclk); #1;

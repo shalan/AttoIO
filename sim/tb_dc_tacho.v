@@ -9,6 +9,7 @@
 /******************************************************************************/
 
 `timescale 1ns/1ps
+`include "attoio_variant.vh"
 
 `ifndef FW_HEX
  `define FW_HEX "build/sw/dc_tacho/dc_tacho.hex"
@@ -28,7 +29,7 @@ module tb_dc_tacho;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [10:0] PADDR;
+    reg  [`AW-1:0] PADDR;
     reg         PSEL, PENABLE, PWRITE;
     reg  [31:0] PWDATA;
     reg  [3:0]  PSTRB;
@@ -65,7 +66,7 @@ module tb_dc_tacho;
         end
     end
 
-    attoio_macro u_dut (
+    `DUT_MOD u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
         .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
         .PWDATA(PWDATA), .PSTRB(PSTRB),
@@ -82,7 +83,7 @@ module tb_dc_tacho;
 
 `include "apb_host.vh"
 
-    task wait_for_mailbox(input [10:0] addr, input [31:0] expected,
+    task wait_for_mailbox(input [`AW-1:0] addr, input [31:0] expected,
                           input integer max_tries);
         integer tries;
         reg [31:0] val;
@@ -103,7 +104,7 @@ module tb_dc_tacho;
         end
     endtask
 
-    task wait_for_at_least(input [10:0] addr, input [31:0] threshold,
+    task wait_for_at_least(input [`AW-1:0] addr, input [31:0] threshold,
                            input integer max_tries);
         integer tries;
         reg [31:0] val;
@@ -158,15 +159,15 @@ module tb_dc_tacho;
             apb_write(i * 4, fw_image[i], 4'hF);
 
         $display("--- releasing IOP reset ---");
-        apb_write(11'h708, 32'h0, 4'hF);
+        apb_write(`REG(11'h008), 32'h0, 4'hF);
 
-        wait_for_mailbox(11'h608, 32'hC0DEC0DE, 50000);
+        wait_for_mailbox(`MBX(11'h008), 32'hC0DEC0DE, 50000);
         $display("  firmware armed PWM + tacho, WFI");
 
         /* Wait for PWM to get past its first cycle so pad[8] is in
          * steady-state.  tick (mailbox[1]) wraps to 0 once per PWM
          * cycle; waiting for it to reach 10 ensures we're mid-cycle. */
-        wait_for_at_least(11'h604, 10, 50000);
+        wait_for_at_least(`MBX(11'h004), 10, 50000);
 
         /* Sample one full PWM cycle. */
         total_cycles = 0;
@@ -193,7 +194,7 @@ module tb_dc_tacho;
             integer j;
             reg [31:0] val;
             for (j = 0; j < 200000; j = j + 1) begin
-                apb_read(11'h600, val);
+                apb_read(`MBX(11'h000), val);
                 if (val >= 1 && val <= 10) begin
                     $display("  mailbox[0] tacho count = %0d (expected 1-5 for 10 kHz / 256 us)",
                              val);
@@ -212,7 +213,7 @@ module tb_dc_tacho;
         /* Wait a couple more PWM cycles, then expect count = 0. */
         repeat (PWM_WINDOW * 3) @(posedge clk_iop);
 
-        apb_read(11'h600, tacho);
+        apb_read(`MBX(11'h000), tacho);
         if (tacho !== 32'h0) begin
             $display("FAIL: tacho expected 0 after stim off, got %0d", tacho);
             $fatal;

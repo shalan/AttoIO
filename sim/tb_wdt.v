@@ -11,6 +11,7 @@
 /******************************************************************************/
 
 `timescale 1ns/1ps
+`include "attoio_variant.vh"
 
 `ifndef FW_HEX
  `define FW_HEX "build/sw/wdt_test/wdt_test.hex"
@@ -25,7 +26,7 @@ module tb_wdt;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [10:0] PADDR;
+    reg  [`AW-1:0] PADDR;
     reg         PSEL;
     reg         PENABLE;
     reg         PWRITE;
@@ -49,7 +50,7 @@ module tb_wdt;
         div_cnt <= (div_cnt == CLK_DIV - 1) ? 0 : div_cnt + 1;
     end
 
-    attoio_macro u_dut (
+    `DUT_MOD u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
         .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
         .PWDATA(PWDATA), .PSTRB(PSTRB),
@@ -77,7 +78,7 @@ module tb_wdt;
     end
 
 `include "apb_host.vh"
-    task wait_for_mailbox(input [10:0] addr, input [31:0] expected);
+    task wait_for_mailbox(input [`AW-1:0] addr, input [31:0] expected);
         integer tries;
         reg [31:0] val;
         begin
@@ -118,14 +119,14 @@ module tb_wdt;
             apb_write(i * 4, fw_image[i], 4'hF);
 
         $display("--- releasing IOP reset ---");
-        apb_write(11'h708, 32'h0, 4'hF);
+        apb_write(`REG(11'h008), 32'h0, 4'hF);
 
         // --- Phase 1: firmware pets WDT 3x then reports success. ---
-        wait_for_mailbox(11'h600, 32'hAAAA0001);
+        wait_for_mailbox(`MBX(11'h000), 32'hAAAA0001);
         $display("  PASS phase 1: firmware pet WDT 3x without expire");
 
         // --- Phase 2: firmware stops petting -> WDT expires ---
-        wait_for_mailbox(11'h600, 32'hAAAA0002);
+        wait_for_mailbox(`MBX(11'h000), 32'hAAAA0002);
         $display("  PASS phase 2: WDT expired, ISR ran");
 
         // Verify irq_to_host was asserted
@@ -135,14 +136,14 @@ module tb_wdt;
         end
         $display("  PASS: irq_to_host pulsed to the host");
 
-        apb_read(11'h610, rd);  // mailbox[4]
+        apb_read(`MBX(11'h010), rd);  // mailbox[4]
         if (rd !== 32'd1) begin
             $display("FAIL: nmi_count = %0d, expected 1", rd);
             $fatal;
         end
         $display("  PASS: nmi_count = 1");
 
-        apb_read(11'h618, rd);  // mailbox[6]
+        apb_read(`MBX(11'h018), rd);  // mailbox[6]
         if ((rd & 32'h1) !== 32'h1) begin
             $display("FAIL: WDT_STATUS snapshot did not show expired (got %08h)", rd);
             $fatal;

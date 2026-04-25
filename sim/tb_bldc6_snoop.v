@@ -15,6 +15,7 @@
 /******************************************************************************/
 
 `timescale 1ns/1ps
+`include "attoio_variant.vh"
 
 `ifndef FW_HEX
  `define FW_HEX "build/sw/bldc6/bldc6.hex"
@@ -29,7 +30,7 @@ module tb_bldc6_snoop;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [10:0] PADDR;
+    reg  [`AW-1:0] PADDR;
     reg         PSEL, PENABLE, PWRITE;
     reg  [31:0] PWDATA;
     reg  [3:0]  PSTRB;
@@ -50,7 +51,7 @@ module tb_bldc6_snoop;
         div_cnt <= (div_cnt == CLK_DIV - 1) ? 0 : div_cnt + 1;
     end
 
-    attoio_macro u_dut (
+    `DUT_MOD u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
         .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
         .PWDATA(PWDATA), .PSTRB(PSTRB),
@@ -67,7 +68,7 @@ module tb_bldc6_snoop;
 
 `include "apb_host.vh"
 
-    task wait_for_mailbox(input [10:0] addr, input [31:0] expected,
+    task wait_for_mailbox(input [`AW-1:0] addr, input [31:0] expected,
                           input integer max_tries);
         integer tries;
         reg [31:0] val;
@@ -84,7 +85,7 @@ module tb_bldc6_snoop;
         end
     endtask
 
-    task wait_for_at_least(input [10:0] addr, input [31:0] threshold,
+    task wait_for_at_least(input [`AW-1:0] addr, input [31:0] threshold,
                            input integer max_tries);
         integer tries;
         reg [31:0] val;
@@ -195,8 +196,8 @@ module tb_bldc6_snoop;
         for (i = 0; i < 256; i = i + 1)
             apb_write(i * 4, fw_image[i], 4'hF);
 
-        apb_write(11'h708, 32'h0, 4'hF);
-        wait_for_mailbox(11'h608, 32'hC0DEC0DE, 50000);
+        apb_write(`REG(11'h008), 32'h0, 4'hF);
+        wait_for_mailbox(`MBX(11'h008), 32'hC0DEC0DE, 50000);
         $display("  firmware armed, WFI");
         $display("");
         $display("================= Snoop: first Hall edge =================");
@@ -211,37 +212,37 @@ module tb_bldc6_snoop;
 
         apply_hall(hall_seq[0]);
         expected_count = 1;
-        wait_for_at_least(11'h600, expected_count, 5000);
+        wait_for_at_least(`MBX(11'h000), expected_count, 5000);
         repeat (400) @(posedge sysclk);
 
         $display("");
         $display("================= Snoop: second Hall edge =================");
         apply_hall(hall_seq[1]);
         expected_count = 2;
-        wait_for_at_least(11'h600, expected_count, 5000);
+        wait_for_at_least(`MBX(11'h000), expected_count, 5000);
         repeat (400) @(posedge sysclk);
 
         $display("");
         $display("================= Snoop: third Hall edge =================");
         apply_hall(hall_seq[2]);
         expected_count = 3;
-        wait_for_at_least(11'h600, expected_count, 5000);
+        wait_for_at_least(`MBX(11'h000), expected_count, 5000);
         repeat (400) @(posedge sysclk);
 
         $display("");
         $display("================= Snoop: fourth Hall edge (0.3 — the failing one) =================");
         apply_hall(hall_seq[3]);
         expected_count = 4;
-        wait_for_at_least(11'h600, expected_count, 5000);
+        wait_for_at_least(`MBX(11'h000), expected_count, 5000);
         repeat (400) @(posedge sysclk);
 
         $display("");
         $display("================= Reading edge-3 mailbox state ===============");
-        apb_read(11'h600, mb0);
+        apb_read(`MBX(11'h000), mb0);
         $display("  --> mailbox[0] = %08h  (expected count = 4)", mb0);
-        apb_read(11'h604, mb1);
+        apb_read(`MBX(11'h004), mb1);
         $display("  --> mailbox[1] = %08h  (expected idx   = 3)", mb1);
-        apb_read(11'h60C, mb3);
+        apb_read(`MBX(11'h00c), mb3);
         $display("  --> mailbox[3] = %08h  (expected gate  = 90 = U_H|V_L)", mb3);
 
         core_store_trace_en = 1'b0;
@@ -258,13 +259,13 @@ module tb_bldc6_snoop;
                 for (s = (rev == 0) ? 4 : 0; s < 6; s = s + 1) begin
                     apply_hall(hall_seq[s]);
                     expected_count = expected_count + 1;
-                    wait_for_at_least(11'h600, expected_count, 5000);
+                    wait_for_at_least(`MBX(11'h000), expected_count, 5000);
 
                     expected_idx  = s;
                     expected_pads = expect_gate[s];
 
-                    apb_read(11'h604, mb1);
-                    apb_read(11'h60C, mb3);
+                    apb_read(`MBX(11'h004), mb1);
+                    apb_read(`MBX(11'h00c), mb3);
 
                     if (mb1 !== {29'h0, expected_idx[2:0]}) begin
                         $display("FAIL edge %0d.%0d: mailbox[1] = %08h != idx %0d",
@@ -286,7 +287,7 @@ module tb_bldc6_snoop;
         end
 
         /* Final snapshot of the first-edge state */
-        apb_read(11'h600, mb0);
+        apb_read(`MBX(11'h000), mb0);
 
         $display("");
         $display("================= Results =================");

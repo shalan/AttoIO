@@ -16,6 +16,7 @@
 /******************************************************************************/
 
 `timescale 1ns/1ps
+`include "attoio_variant.vh"
 
 `ifndef FW_HEX
  `define FW_HEX "build/sw/irq_aggregate/irq_aggregate.hex"
@@ -30,7 +31,7 @@ module tb_irq_aggregate;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [10:0] PADDR;
+    reg  [`AW-1:0] PADDR;
     reg         PSEL, PENABLE, PWRITE;
     reg  [31:0] PWDATA;
     reg  [3:0]  PSTRB;
@@ -51,7 +52,7 @@ module tb_irq_aggregate;
         div_cnt <= (div_cnt == CLK_DIV - 1) ? 0 : div_cnt + 1;
     end
 
-    attoio_macro u_dut (
+    `DUT_MOD u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
         .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
         .PWDATA(PWDATA), .PSTRB(PSTRB),
@@ -68,7 +69,7 @@ module tb_irq_aggregate;
 
 `include "apb_host.vh"
 
-    task wait_for_mailbox(input [10:0] addr, input [31:0] expected,
+    task wait_for_mailbox(input [`AW-1:0] addr, input [31:0] expected,
                           input integer max_tries);
         integer tries;
         reg [31:0] val;
@@ -105,7 +106,7 @@ module tb_irq_aggregate;
                          waited);
                 $fatal;
             end
-            apb_write(11'h704, 32'h00000001, 4'hF);   /* W1C C2H */
+            apb_write(`REG(11'h004), 32'h00000001, 4'hF);   /* W1C C2H */
         end
     endtask
 
@@ -133,9 +134,9 @@ module tb_irq_aggregate;
             apb_write(i * 4, fw_image[i], 4'hF);
 
         $display("--- releasing IOP reset ---");
-        apb_write(11'h708, 32'h0, 4'hF);
+        apb_write(`REG(11'h008), 32'h0, 4'hF);
 
-        wait_for_mailbox(11'h608, 32'hC0DEC0DE, 50000);
+        wait_for_mailbox(`MBX(11'h008), 32'hC0DEC0DE, 50000);
         $display("  firmware armed both IRQ sources, now in WFI");
 
         // ---------------------------------------------------------------
@@ -147,8 +148,8 @@ module tb_irq_aggregate;
         wait_for_irq_to_host(200000);
         wait_for_irq_to_host(200000);
         wait_for_irq_to_host(200000);
-        apb_read(11'h600, timer_a);
-        apb_read(11'h604, wake_a);
+        apb_read(`MBX(11'h000), timer_a);
+        apb_read(`MBX(11'h004), wake_a);
         $display("  after 3 C2H pulses: timer_count=%0d wake_count=%0d",
                  timer_a, wake_a);
         if (timer_a < 3) begin
@@ -175,7 +176,7 @@ module tb_irq_aggregate;
             while (tries < 10) begin
                 wait_for_irq_to_host(200000);
                 repeat (10) @(posedge sysclk);
-                apb_read(11'h604, wake_b);
+                apb_read(`MBX(11'h004), wake_b);
                 if (wake_b > 0) disable drain_until_wake;
                 tries = tries + 1;
             end
@@ -183,7 +184,7 @@ module tb_irq_aggregate;
             $fatal;
         end
 
-        apb_read(11'h610, rd);
+        apb_read(`MBX(11'h010), rd);
         if ((rd & 32'h20) !== 32'h20) begin
             $display("FAIL: WAKE_FLAGS snap missing bit 5 (got %08h)", rd);
             $fatal;
@@ -194,11 +195,11 @@ module tb_irq_aggregate;
         // Phase C: confirm timer keeps firing after the wake event
         // ---------------------------------------------------------------
         $display("--- Phase C: timer keeps ticking after wake ---");
-        apb_read(11'h600, timer_a);
+        apb_read(`MBX(11'h000), timer_a);
         wait_for_irq_to_host(200000);
         wait_for_irq_to_host(200000);
         repeat (10) @(posedge sysclk);
-        apb_read(11'h600, timer_b);
+        apb_read(`MBX(11'h000), timer_b);
         if (!(timer_b > timer_a)) begin
             $display("FAIL: timer counter stuck after wake (a=%0d b=%0d)",
                      timer_a, timer_b);

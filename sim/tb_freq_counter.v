@@ -10,6 +10,7 @@
 /******************************************************************************/
 
 `timescale 1ns/1ps
+`include "attoio_variant.vh"
 
 `ifndef FW_HEX
  `define FW_HEX "build/sw/freq_counter/freq_counter.hex"
@@ -30,7 +31,7 @@ module tb_freq_counter;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [10:0] PADDR;
+    reg  [`AW-1:0] PADDR;
     reg         PSEL, PENABLE, PWRITE;
     reg  [31:0] PWDATA;
     reg  [3:0]  PSTRB;
@@ -67,7 +68,7 @@ module tb_freq_counter;
         end
     end
 
-    attoio_macro u_dut (
+    `DUT_MOD u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
         .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
         .PWDATA(PWDATA), .PSTRB(PSTRB),
@@ -84,7 +85,7 @@ module tb_freq_counter;
 
 `include "apb_host.vh"
 
-    task wait_for_mailbox(input [10:0] addr, input [31:0] expected,
+    task wait_for_mailbox(input [`AW-1:0] addr, input [31:0] expected,
                           input integer max_tries);
         integer tries;
         reg [31:0] val;
@@ -105,7 +106,7 @@ module tb_freq_counter;
         end
     endtask
 
-    task wait_for_at_least(input [10:0] addr, input [31:0] threshold,
+    task wait_for_at_least(input [`AW-1:0] addr, input [31:0] threshold,
                            input integer max_tries);
         integer tries;
         reg [31:0] val;
@@ -148,9 +149,9 @@ module tb_freq_counter;
             apb_write(i * 4, fw_image[i], 4'hF);
 
         $display("--- releasing IOP reset ---");
-        apb_write(11'h708, 32'h0, 4'hF);
+        apb_write(`REG(11'h008), 32'h0, 4'hF);
 
-        wait_for_mailbox(11'h608, 32'hC0DEC0DE, 50000);
+        wait_for_mailbox(`MBX(11'h008), 32'hC0DEC0DE, 50000);
         $display("  firmware armed TIMER+CAP, now in WFI");
 
         /* Start the 10 kHz stimulus on pad[7]. */
@@ -160,10 +161,10 @@ module tb_freq_counter;
         /* Wait for at least two full gate windows to complete so we
          * can inspect a stable measurement.  window_idx >= 3 means
          * windows 1 and 2 landed; window 3 is in flight. */
-        wait_for_at_least(11'h604, 3, 1000000);
+        wait_for_at_least(`MBX(11'h004), 3, 1000000);
 
-        apb_read(11'h600, count);
-        apb_read(11'h604, widx);
+        apb_read(`MBX(11'h000), count);
+        apb_read(`MBX(11'h004), widx);
         $display("  window %0d: count = %0d", widx, count);
 
         if (count < EXPECTED_EDGES_PER_GATE - TOL_EDGES ||
@@ -174,9 +175,9 @@ module tb_freq_counter;
         end
 
         /* Grab one more window to confirm steady state. */
-        wait_for_at_least(11'h604, widx + 1, 1000000);
-        apb_read(11'h600, count);
-        apb_read(11'h604, widx);
+        wait_for_at_least(`MBX(11'h004), widx + 1, 1000000);
+        apb_read(`MBX(11'h000), count);
+        apb_read(`MBX(11'h004), widx);
         $display("  window %0d: count = %0d (should match)", widx, count);
         if (count < EXPECTED_EDGES_PER_GATE - TOL_EDGES ||
             count > EXPECTED_EDGES_PER_GATE + TOL_EDGES) begin

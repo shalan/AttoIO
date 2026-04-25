@@ -10,6 +10,7 @@
 /******************************************************************************/
 
 `timescale 1ns/1ps
+`include "attoio_variant.vh"
 
 `ifndef FW_HEX
  `define FW_HEX "build/sw/timer_pwm/timer_pwm.hex"
@@ -24,7 +25,7 @@ module tb_timer;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [10:0] PADDR;
+    reg  [`AW-1:0] PADDR;
     reg         PSEL;
     reg         PENABLE;
     reg         PWRITE;
@@ -48,7 +49,7 @@ module tb_timer;
         div_cnt <= (div_cnt == CLK_DIV - 1) ? 0 : div_cnt + 1;
     end
 
-    attoio_macro u_dut (
+    `DUT_MOD u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
         .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
         .PWDATA(PWDATA), .PSTRB(PSTRB),
@@ -131,13 +132,13 @@ module tb_timer;
             apb_write(i * 4, fw_image[i], 4'hF);
 
         $display("--- releasing IOP reset ---");
-        apb_write(11'h708, 32'h0, 4'hF);
+        apb_write(`REG(11'h008), 32'h0, 4'hF);
 
         // Wait for the firmware to run enough edges.
         repeat (800) @(posedge clk_iop);
 
         // Verify sentinel
-        apb_read(11'h600, rd);
+        apb_read(`MBX(11'h000), rd);
         if (rd !== 32'hCAFEBABE) begin
             $display("FAIL: mailbox[0] = %08h, expected CAFEBABE", rd);
             $fatal;

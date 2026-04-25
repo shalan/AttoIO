@@ -12,6 +12,7 @@
 /******************************************************************************/
 
 `timescale 1ns/1ps
+`include "attoio_variant.vh"
 
 `ifndef FW_HEX
  `define FW_HEX "build/sw/irq_doorbell/irq_doorbell.hex"
@@ -26,7 +27,7 @@ module tb_irq_doorbell;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [10:0] PADDR;
+    reg  [`AW-1:0] PADDR;
     reg         PSEL, PENABLE, PWRITE;
     reg  [31:0] PWDATA;
     reg  [3:0]  PSTRB;
@@ -47,7 +48,7 @@ module tb_irq_doorbell;
         div_cnt <= (div_cnt == CLK_DIV - 1) ? 0 : div_cnt + 1;
     end
 
-    attoio_macro u_dut (
+    `DUT_MOD u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
         .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
         .PWDATA(PWDATA), .PSTRB(PSTRB),
@@ -64,7 +65,7 @@ module tb_irq_doorbell;
 
 `include "apb_host.vh"
 
-    task wait_for_mailbox(input [10:0] addr, input [31:0] expected,
+    task wait_for_mailbox(input [`AW-1:0] addr, input [31:0] expected,
                           input integer max_tries);
         integer tries;
         reg [31:0] val;
@@ -107,32 +108,32 @@ module tb_irq_doorbell;
             apb_write(i * 4, fw_image[i], 4'hF);
 
         $display("--- releasing IOP reset ---");
-        apb_write(11'h708, 32'h0, 4'hF);
+        apb_write(`REG(11'h008), 32'h0, 4'hF);
 
-        wait_for_mailbox(11'h608, 32'hC0DEC0DE, 50000);
+        wait_for_mailbox(`MBX(11'h008), 32'hC0DEC0DE, 50000);
         $display("  firmware armed MIE, now in WFI");
 
         // -------------------------------------------------------------
         // Ring 1 — host stages cmd, rings doorbell, polls count
         // -------------------------------------------------------------
         $display("--- Ring 1: stage cmd 0xCAFE0001, then write H2C=1 ---");
-        apb_write(11'h640, 32'hCAFE0001, 4'hF);
-        apb_write(11'h700, 32'h00000001, 4'hF);
+        apb_write(`MBX(11'h040), 32'hCAFE0001, 4'hF);
+        apb_write(`REG(11'h000), 32'h00000001, 4'hF);
 
         /* Tight polling — exactly the BUG-001 reproducer pattern. */
-        wait_for_mailbox(11'h600, 32'h00000001, 5000);
+        wait_for_mailbox(`MBX(11'h000), 32'h00000001, 5000);
 
-        apb_read(11'h610, rd);
+        apb_read(`MBX(11'h010), rd);
         if ((rd & 32'h1) !== 32'h1) begin
             $display("FAIL: snapshot didn't see H2C bit set (got %08h)", rd);
             $fatal;
         end
-        apb_read(11'h618, rd);
+        apb_read(`MBX(11'h018), rd);
         if (rd !== 32'hCAFE0001) begin
             $display("FAIL: cmd echo wrong (got %08h, expected cafe0001)", rd);
             $fatal;
         end
-        apb_read(11'h700, rd);
+        apb_read(`REG(11'h000), rd);
         if (rd[0] !== 1'b0) begin
             $display("FAIL: H2C still set after ISR (got %08h)", rd);
             $fatal;
@@ -143,11 +144,11 @@ module tb_irq_doorbell;
         // Ring 2 — different cmd, same polling pattern
         // -------------------------------------------------------------
         $display("--- Ring 2: stage cmd 0xBEEF0002, then write H2C=1 ---");
-        apb_write(11'h640, 32'hBEEF0002, 4'hF);
-        apb_write(11'h700, 32'h00000001, 4'hF);
+        apb_write(`MBX(11'h040), 32'hBEEF0002, 4'hF);
+        apb_write(`REG(11'h000), 32'h00000001, 4'hF);
 
-        wait_for_mailbox(11'h600, 32'h00000002, 5000);
-        apb_read(11'h618, rd);
+        wait_for_mailbox(`MBX(11'h000), 32'h00000002, 5000);
+        apb_read(`MBX(11'h018), rd);
         if (rd !== 32'hBEEF0002) begin
             $display("FAIL: Ring 2 cmd echo wrong (got %08h)", rd);
             $fatal;

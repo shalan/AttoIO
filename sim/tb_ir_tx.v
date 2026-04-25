@@ -10,6 +10,7 @@
 /******************************************************************************/
 
 `timescale 1ns/1ps
+`include "attoio_variant.vh"
 
 `ifndef FW_HEX
  `define FW_HEX "build/sw/ir_tx/ir_tx.hex"
@@ -36,7 +37,7 @@ module tb_ir_tx;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [10:0] PADDR;
+    reg  [`AW-1:0] PADDR;
     reg         PSEL, PENABLE, PWRITE;
     reg  [31:0] PWDATA;
     reg  [3:0]  PSTRB;
@@ -57,7 +58,7 @@ module tb_ir_tx;
         div_cnt <= (div_cnt == CLK_DIV - 1) ? 0 : div_cnt + 1;
     end
 
-    attoio_macro u_dut (
+    `DUT_MOD u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
         .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
         .PWDATA(PWDATA), .PSTRB(PSTRB),
@@ -74,7 +75,7 @@ module tb_ir_tx;
 
 `include "apb_host.vh"
 
-    task wait_for_mailbox(input [10:0] addr, input [31:0] expected,
+    task wait_for_mailbox(input [`AW-1:0] addr, input [31:0] expected,
                           input integer max_tries);
         integer tries;
         reg [31:0] val;
@@ -136,13 +137,13 @@ module tb_ir_tx;
         $display("--- tb_ir_tx: loading firmware ---");
         for (i = 0; i < 256; i = i + 1)
             apb_write(i * 4, fw_image[i], 4'hF);
-        apb_write(11'h708, 32'h0, 4'hF);
+        apb_write(`REG(11'h008), 32'h0, 4'hF);
 
-        wait_for_mailbox(11'h608, 32'hC0DEC0DE, 50000);
+        wait_for_mailbox(`MBX(11'h008), 32'hC0DEC0DE, 50000);
         $display("  firmware armed — TX frame 0x%08h", EXPECTED_FRAME);
 
         /* Wait for done sentinel. */
-        wait_for_mailbox(11'h600, 32'h1, 500000);
+        wait_for_mailbox(`MBX(11'h000), 32'h1, 500000);
         $display("  TX finished");
 
         $display("");

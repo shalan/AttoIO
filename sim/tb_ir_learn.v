@@ -14,6 +14,7 @@
 /******************************************************************************/
 
 `timescale 1ns/1ps
+`include "attoio_variant.vh"
 
 `ifndef FW_HEX
  `define FW_HEX "build/sw/ir_learn/ir_learn.hex"
@@ -38,7 +39,7 @@ module tb_ir_learn;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [10:0] PADDR;
+    reg  [`AW-1:0] PADDR;
     reg         PSEL, PENABLE, PWRITE;
     reg  [31:0] PWDATA;
     reg  [3:0]  PSTRB;
@@ -59,7 +60,7 @@ module tb_ir_learn;
         div_cnt <= (div_cnt == CLK_DIV - 1) ? 0 : div_cnt + 1;
     end
 
-    attoio_macro u_dut (
+    `DUT_MOD u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
         .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
         .PWDATA(PWDATA), .PSTRB(PSTRB),
@@ -76,7 +77,7 @@ module tb_ir_learn;
 
 `include "apb_host.vh"
 
-    task wait_for_mailbox(input [10:0] addr, input [31:0] expected,
+    task wait_for_mailbox(input [`AW-1:0] addr, input [31:0] expected,
                           input integer max_tries);
         integer tries;
         reg [31:0] val;
@@ -141,16 +142,16 @@ module tb_ir_learn;
         $display("--- tb_ir_learn: loading firmware ---");
         for (i = 0; i < 256; i = i + 1)
             apb_write(i * 4, fw_image[i], 4'hF);
-        apb_write(11'h708, 32'h0, 4'hF);
+        apb_write(`REG(11'h008), 32'h0, 4'hF);
 
-        wait_for_mailbox(11'h608, 32'hC0DEC0DE, 50000);
+        wait_for_mailbox(`MBX(11'h008), 32'hC0DEC0DE, 50000);
         $display("  firmware armed, entering LEARN phase");
 
         /* Drive the input pattern. */
         drive_pattern();
 
         /* Wait for LEARN phase to complete (mailbox[0] = 1). */
-        wait_for_mailbox(11'h600, 32'h1, 500000);
+        wait_for_mailbox(`MBX(11'h000), 32'h1, 500000);
         $display("  LEARN complete (FW reached LEARN-done sentinel)");
 
         /* Only now that LEARN is done, enable the replay edge observer
@@ -158,7 +159,7 @@ module tb_ir_learn;
         observer_en = 1'b1;
 
         /* Wait for REPLAY phase to complete (mailbox[0] = 2). */
-        wait_for_mailbox(11'h600, 32'h2, 500000);
+        wait_for_mailbox(`MBX(11'h000), 32'h2, 500000);
         $display("  REPLAY complete, %0d pad[8] transitions observed", replay_n);
 
         if (replay_n !== N_EDGES) begin

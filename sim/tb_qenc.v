@@ -10,6 +10,7 @@
 /******************************************************************************/
 
 `timescale 1ns/1ps
+`include "attoio_variant.vh"
 
 `ifndef FW_HEX
  `define FW_HEX "build/sw/qenc/qenc.hex"
@@ -24,7 +25,7 @@ module tb_qenc;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [10:0] PADDR;
+    reg  [`AW-1:0] PADDR;
     reg         PSEL, PENABLE, PWRITE;
     reg  [31:0] PWDATA;
     reg  [3:0]  PSTRB;
@@ -45,7 +46,7 @@ module tb_qenc;
         div_cnt <= (div_cnt == CLK_DIV - 1) ? 0 : div_cnt + 1;
     end
 
-    attoio_macro u_dut (
+    `DUT_MOD u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
         .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
         .PWDATA(PWDATA), .PSTRB(PSTRB),
@@ -62,7 +63,7 @@ module tb_qenc;
 
 `include "apb_host.vh"
 
-    task wait_for_mailbox(input [10:0] addr, input [31:0] expected,
+    task wait_for_mailbox(input [`AW-1:0] addr, input [31:0] expected,
                           input integer max_tries);
         integer tries;
         reg [31:0] val;
@@ -79,7 +80,7 @@ module tb_qenc;
         end
     endtask
 
-    task wait_for_at_least(input [10:0] addr, input [31:0] threshold,
+    task wait_for_at_least(input [`AW-1:0] addr, input [31:0] threshold,
                            input integer max_tries);
         integer tries;
         reg [31:0] val;
@@ -159,9 +160,9 @@ module tb_qenc;
         $display("--- tb_qenc: loading firmware ---");
         for (i = 0; i < 256; i = i + 1)
             apb_write(i * 4, fw_image[i], 4'hF);
-        apb_write(11'h708, 32'h0, 4'hF);
+        apb_write(`REG(11'h008), 32'h0, 4'hF);
 
-        wait_for_mailbox(11'h608, 32'hC0DEC0DE, 50000);
+        wait_for_mailbox(`MBX(11'h008), 32'hC0DEC0DE, 50000);
         $display("  firmware armed");
 
         /* 3 CW rotations — position should increment by 12. */
@@ -170,11 +171,11 @@ module tb_qenc;
         cw_rotation();
         cw_rotation();
 
-        apb_read(11'h600, rd);
+        apb_read(`MBX(11'h000), rd);
         $display("  wake_count after CW = %0d  (expect 12)", rd);
-        apb_read(11'h610, rd);
+        apb_read(`MBX(11'h010), rd);
         $display("  last AB state seen  = %0d", rd);
-        apb_read(11'h604, rd);
+        apb_read(`MBX(11'h004), rd);
         $display("  position after CW   = %0d  (expect 12)", $signed(rd));
         if ($signed(rd) !== 12) begin
             $display("FAIL: CW position mismatch");
@@ -187,7 +188,7 @@ module tb_qenc;
         ccw_rotation();
         ccw_rotation();
 
-        apb_read(11'h604, rd);
+        apb_read(`MBX(11'h004), rd);
         $display("  position after CCW = %0d  (expect 0)", $signed(rd));
         if ($signed(rd) !== 0) begin
             $display("FAIL: CCW position mismatch");
@@ -199,8 +200,8 @@ module tb_qenc;
         press_button();
         press_button();
 
-        wait_for_at_least(11'h60C, 2, 5000);
-        apb_read(11'h60C, rd);
+        wait_for_at_least(`MBX(11'h00c), 2, 5000);
+        apb_read(`MBX(11'h00c), rd);
         $display("  button count = %0d  (expect 2)", rd);
         if (rd !== 2) begin
             $display("FAIL: button count mismatch");

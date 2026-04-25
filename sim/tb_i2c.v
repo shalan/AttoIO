@@ -10,6 +10,7 @@
 /******************************************************************************/
 
 `timescale 1ns/1ps
+`include "attoio_variant.vh"
 
 `ifndef FW_HEX
  `define FW_HEX "build/sw/i2c_eeprom/i2c_eeprom.hex"
@@ -24,7 +25,7 @@ module tb_i2c;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [10:0] PADDR;
+    reg  [`AW-1:0] PADDR;
     reg         PSEL;
     reg         PENABLE;
     reg         PWRITE;
@@ -75,7 +76,7 @@ module tb_i2c;
         div_cnt <= (div_cnt == CLK_DIV - 1) ? 0 : div_cnt + 1;
     end
 
-    attoio_macro u_dut (
+    `DUT_MOD u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
         .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
         .PWDATA(PWDATA), .PSTRB(PSTRB),
@@ -97,7 +98,7 @@ module tb_i2c;
 
     /* ---- Host bus tasks ---- */
 `include "apb_host.vh"
-    task wait_for_mailbox(input [10:0] addr, input [31:0] expected, input integer max_tries);
+    task wait_for_mailbox(input [`AW-1:0] addr, input [31:0] expected, input integer max_tries);
         integer tries;
         reg [31:0] val;
         begin
@@ -138,14 +139,14 @@ module tb_i2c;
             apb_write(i * 4, fw_image[i], 4'hF);
 
         $display("--- releasing IOP reset ---");
-        apb_write(11'h708, 32'h0, 4'hF);
+        apb_write(`REG(11'h008), 32'h0, 4'hF);
 
         /* Phase 0.9 FW uses a 3-phase write / set-address / read (no
          * restart needed) — same 4-byte round-trip coverage.  NOTE:
          * this example does not fit in Phase 0.9's 512 B SRAM A
          * budget and is excluded from default regression; it's kept
          * as archival for anyone running a larger-RAM variant. */
-        wait_for_mailbox(11'h600, 32'hE2E2E2E2, 500000);
+        wait_for_mailbox(`MBX(11'h000), 32'hE2E2E2E2, 500000);
         $display("  firmware signalled 'I2C done'");
 
         /* Cross-check EEPROM contents (slave side). */
@@ -161,7 +162,7 @@ module tb_i2c;
         $display("  PASS: EEPROM memory matches master writes (5A A5 DE AD)");
 
         /* Cross-check master readback via mailbox word @ 0x610 (bytes 16..19). */
-        apb_read(11'h610, rd);
+        apb_read(`MBX(11'h010), rd);
         for (i = 0; i < 4; i = i + 1) begin : readcheck
             reg [7:0] got;
             got = rd[i*8 +: 8];

@@ -16,6 +16,7 @@
 /******************************************************************************/
 
 `timescale 1ns/1ps
+`include "attoio_variant.vh"
 
 `ifndef FW_HEX
  `define FW_HEX "build/sw/wake_test/wake_test.hex"
@@ -30,7 +31,7 @@ module tb_wake;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [10:0] PADDR;
+    reg  [`AW-1:0] PADDR;
     reg         PSEL;
     reg         PENABLE;
     reg         PWRITE;
@@ -54,7 +55,7 @@ module tb_wake;
         div_cnt <= (div_cnt == CLK_DIV - 1) ? 0 : div_cnt + 1;
     end
 
-    attoio_macro u_dut (
+    `DUT_MOD u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
         .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
         .PWDATA(PWDATA), .PSTRB(PSTRB),
@@ -70,7 +71,7 @@ module tb_wake;
     );
 
 `include "apb_host.vh"
-    task wait_for_mailbox(input [10:0] addr, input [31:0] expected);
+    task wait_for_mailbox(input [`AW-1:0] addr, input [31:0] expected);
         integer tries;
         reg [31:0] val;
         begin
@@ -113,20 +114,20 @@ module tb_wake;
             apb_write(i * 4, fw_image[i], 4'hF);
 
         $display("--- releasing IOP reset ---");
-        apb_write(11'h708, 32'h0, 4'hF);
+        apb_write(`REG(11'h008), 32'h0, 4'hF);
 
         // Wait for firmware to reach WFI (sentinel = 0xC0DEC0DE @ mailbox word 2)
-        wait_for_mailbox(11'h608, 32'hC0DEC0DE);
+        wait_for_mailbox(`MBX(11'h008), 32'hC0DEC0DE);
         $display("  firmware configured wake, now idle in WFI");
 
         // ---- Test A: rising edge on pad[5] ----
         $display("--- Test A: pad[5] rising edge ---");
-        apb_read(11'h600, rd); prev_count = rd;
+        apb_read(`MBX(11'h000), rd); prev_count = rd;
         @(posedge sysclk); pad_in = 16'h0020; // bit 5 = 1
         repeat (1500) @(posedge sysclk);
-        apb_read(11'h600, rd);
+        apb_read(`MBX(11'h000), rd);
         if (rd === prev_count) begin $display("FAIL: count unchanged after rise on pad[5] (count=%0d)", rd); $fatal; end
-        apb_read(11'h610, rd);
+        apb_read(`MBX(11'h010), rd);
         if ((rd & 32'h20) != 32'h20) begin
             $display("FAIL: expected bit 5 in WAKE_FLAGS snapshot, got %08h", rd);
             $fatal;
@@ -135,19 +136,19 @@ module tb_wake;
 
         // ---- Test B: falling edge on pad[9] ----
         $display("--- Test B: pad[9] falling edge ---");
-        apb_read(11'h600, rd); prev_count = rd;
+        apb_read(`MBX(11'h000), rd); prev_count = rd;
         @(posedge sysclk); pad_in = 16'h0220; // bit 5 still high, bit 9 = 1
         repeat (1500) @(posedge sysclk);        // let pad[9] rise settle (no wake because falling only)
-        apb_read(11'h600, rd);
+        apb_read(`MBX(11'h000), rd);
         if (rd !== prev_count) begin
             $display("FAIL: wake count bumped on pad[9] rise (falling-only should ignore)");
             $fatal;
         end
         @(posedge sysclk); pad_in = 16'h0020; // bit 9 = 0 (falling)
         repeat (1500) @(posedge sysclk);
-        apb_read(11'h600, rd);
+        apb_read(`MBX(11'h000), rd);
         if (rd === prev_count) begin $display("FAIL: count unchanged after fall on pad[9]"); $fatal; end
-        apb_read(11'h610, rd);
+        apb_read(`MBX(11'h010), rd);
         if ((rd & 32'h200) != 32'h200) begin
             $display("FAIL: expected bit 9 in WAKE_FLAGS snapshot, got %08h", rd);
             $fatal;
@@ -156,12 +157,12 @@ module tb_wake;
 
         // ---- Test C: edge on pad[0] (not masked) ----
         $display("--- Test C: pad[0] edges ignored (mask=0) ---");
-        apb_read(11'h600, rd); prev_count = rd;
+        apb_read(`MBX(11'h000), rd); prev_count = rd;
         @(posedge sysclk); pad_in = 16'h0021; // add bit 0
         repeat (1500) @(posedge sysclk);
         @(posedge sysclk); pad_in = 16'h0020; // drop bit 0
         repeat (1500) @(posedge sysclk);
-        apb_read(11'h600, rd);
+        apb_read(`MBX(11'h000), rd);
         if (rd !== prev_count) begin
             $display("FAIL: wake count bumped on pad[0] edges (mask=0 should ignore); count=%0d prev=%0d", rd, prev_count);
             $fatal;

@@ -4,6 +4,7 @@
 /******************************************************************************/
 
 `timescale 1ns/1ps
+`include "attoio_variant.vh"
 
 `ifndef FW_HEX
  `define FW_HEX "build/sw/uart_echo/uart_echo.hex"
@@ -19,7 +20,7 @@ module tb_uart_echo;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [10:0] PADDR;
+    reg  [`AW-1:0] PADDR;
     reg         PSEL;
     reg         PENABLE;
     reg         PWRITE;
@@ -48,7 +49,7 @@ module tb_uart_echo;
     reg  sample_clk = 0;
     always #(SAMPLE_HALF_NS) sample_clk = ~sample_clk;
 
-    attoio_macro u_dut (
+    `DUT_MOD u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
         .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
         .PWDATA(PWDATA), .PSTRB(PSTRB),
@@ -125,7 +126,7 @@ module tb_uart_echo;
             apb_write(i * 4, fw_image[i], 4'hF);
 
         $display("--- releasing IOP reset ---");
-        apb_write(11'h708, 32'h0, 4'hF);
+        apb_write(`REG(11'h008), 32'h0, 4'hF);
 
         /* Give the firmware a moment to reach the main loop. */
         #100000;

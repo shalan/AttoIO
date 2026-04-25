@@ -12,6 +12,7 @@
 /******************************************************************************/
 
 `timescale 1ns/1ps
+`include "attoio_variant.vh"
 
 `ifndef FW_HEX
  `define FW_HEX "build/sw/pdm_dac/pdm_dac.hex"
@@ -38,7 +39,7 @@ module tb_pdm_dac;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [10:0] PADDR;
+    reg  [`AW-1:0] PADDR;
     reg         PSEL, PENABLE, PWRITE;
     reg  [31:0] PWDATA;
     reg  [3:0]  PSTRB;
@@ -59,7 +60,7 @@ module tb_pdm_dac;
         div_cnt <= (div_cnt == CLK_DIV - 1) ? 0 : div_cnt + 1;
     end
 
-    attoio_macro u_dut (
+    `DUT_MOD u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
         .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
         .PWDATA(PWDATA), .PSTRB(PSTRB),
@@ -109,7 +110,7 @@ module tb_pdm_dac;
         $display("--- tb_pdm_dac: loading firmware ---");
         for (i = 0; i < 256; i = i + 1)
             apb_write(i * 4, fw_image[i], 4'hF);
-        apb_write(11'h708, 32'h0, 4'hF);
+        apb_write(`REG(11'h008), 32'h0, 4'hF);
 
         /* Single mailbox check to confirm FW reached WFI. */
         begin : arm_wait
@@ -117,7 +118,7 @@ module tb_pdm_dac;
             reg [31:0] val;
             tries = 0;
             while (tries < 5000) begin
-                apb_read(11'h608, val);
+                apb_read(`MBX(11'h008), val);
                 if (val === 32'hC0DEC0DE) disable arm_wait;
                 tries = tries + 1;
             end
@@ -134,12 +135,12 @@ module tb_pdm_dac;
         #2700000;    /* 2.7 ms — just past the 2.56 ms nominal end */
         window_open = 1'b0;
 
-        apb_read(11'h60C, rd);
+        apb_read(`MBX(11'h00c), rd);
         if (rd !== 32'h5A5ED0DE) begin
             $display("FAIL: done sentinel = %08h, expected 5A5ED0DE", rd);
             $fatal;
         end
-        apb_read(11'h604, rd);
+        apb_read(`MBX(11'h004), rd);
         if (rd !== N_SAMPLES) begin
             $display("FAIL: final sample index = %0d, expected %0d",
                      rd, N_SAMPLES);

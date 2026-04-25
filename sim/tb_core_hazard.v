@@ -26,6 +26,7 @@
 /******************************************************************************/
 
 `timescale 1ns/1ps
+`include "attoio_variant.vh"
 
 `ifndef FW_HEX
  `define FW_HEX "build/sw/core_hazard/core_hazard.hex"
@@ -101,12 +102,12 @@ module tb_core_hazard;
             $display("[%8t] STORE #%0d  addr=%08h  wmask=%b  data=%08h",
                      $time, store_count, mem_addr, mem_wmask, mem_wdata);
             case (mem_addr[10:0])
-                11'h600: begin seen_mb0 = 1; d_mb0 = mem_wdata; end
-                11'h604: begin seen_mb1 = 1; d_mb1 = mem_wdata; end
-                11'h608: begin seen_mb2 = 1; d_mb2 = mem_wdata; end
-                11'h60C: begin seen_mb3 = 1; d_mb3 = mem_wdata; end
-                11'h614: begin seen_mb5 = 1; d_mb5 = mem_wdata; end
-                11'h61C: begin seen_mb7 = 1; d_mb7 = mem_wdata; end
+                `MBX(11'h000): begin seen_mb0 = 1; d_mb0 = mem_wdata; end
+                `MBX(11'h004): begin seen_mb1 = 1; d_mb1 = mem_wdata; end
+                `MBX(11'h008): begin seen_mb2 = 1; d_mb2 = mem_wdata; end
+                `MBX(11'h00c): begin seen_mb3 = 1; d_mb3 = mem_wdata; end
+                `MBX(11'h014): begin seen_mb5 = 1; d_mb5 = mem_wdata; end
+                `MBX(11'h01c): begin seen_mb7 = 1; d_mb7 = mem_wdata; end
                 default: ;
             endcase
         end

@@ -20,6 +20,7 @@
 /******************************************************************************/
 
 `timescale 1ns/1ps
+`include "attoio_variant.vh"
 
 module tb_pinmux;
 
@@ -27,7 +28,7 @@ module tb_pinmux;
     reg         clk_iop = 0;
     reg         rst_n = 0;
 
-    reg  [10:0] PADDR = 0;
+    reg  [`AW-1:0] PADDR = 0;
     reg         PSEL = 0, PENABLE = 0, PWRITE = 0;
     reg  [31:0] PWDATA = 0;
     reg  [3:0]  PSTRB = 0;
@@ -56,7 +57,7 @@ module tb_pinmux;
         div_cnt <= (div_cnt == CLK_DIV - 1) ? 0 : div_cnt + 1;
     end
 
-    attoio_macro u_dut (
+    `DUT_MOD u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
         .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
         .PWDATA(PWDATA), .PSTRB(PSTRB),
@@ -68,7 +69,7 @@ module tb_pinmux;
         .hp2_out(hp2_out), .hp2_oe(hp2_oe), .hp2_in(hp2_in)
     );
 
-    task apb_write(input [10:0] a, input [31:0] d, input [3:0] s);
+    task apb_write(input [`AW-1:0] a, input [31:0] d, input [3:0] s);
         begin
             @(posedge sysclk); #1;
             PADDR = a; PWDATA = d; PSTRB = s; PWRITE = 1; PSEL = 1;
@@ -80,7 +81,7 @@ module tb_pinmux;
         end
     endtask
 
-    task apb_read(input [10:0] a, output [31:0] d);
+    task apb_read(input [`AW-1:0] a, output [31:0] d);
         begin
             @(posedge sysclk); #1;
             PADDR = a; PWRITE = 0; PSEL = 1;
@@ -119,14 +120,14 @@ module tb_pinmux;
         $display("--- tb_pinmux: PINMUX register readback ---");
 
         /* Default after reset = 0. */
-        apb_read(11'h710, rd); expect_eq32("PINMUX_LO reset", rd, 32'h0);
-        apb_read(11'h714, rd); expect_eq32("PINMUX_HI reset", rd, 32'h0);
+        apb_read(`REG(11'h010), rd); expect_eq32("PINMUX_LO reset", rd, 32'h0);
+        apb_read(`REG(11'h014), rd); expect_eq32("PINMUX_HI reset", rd, 32'h0);
 
         /* Write pattern — all pads routed to hp0 (01 repeated). */
-        apb_write(11'h710, 32'h5555, 4'hF);
-        apb_write(11'h714, 32'h5555, 4'hF);
-        apb_read(11'h710, rd); expect_eq32("PINMUX_LO=5555", rd, 32'h5555);
-        apb_read(11'h714, rd); expect_eq32("PINMUX_HI=5555", rd, 32'h5555);
+        apb_write(`REG(11'h010), 32'h5555, 4'hF);
+        apb_write(`REG(11'h014), 32'h5555, 4'hF);
+        apb_read(`REG(11'h010), rd); expect_eq32("PINMUX_LO=5555", rd, 32'h5555);
+        apb_read(`REG(11'h014), rd); expect_eq32("PINMUX_HI=5555", rd, 32'h5555);
 
         /* --- PHASE 1: all pads point at hp0 --- */
         hp0_out = 16'hA5A5;
@@ -138,21 +139,21 @@ module tb_pinmux;
         expect_eq32("pad_oe  for all-hp0 = FFFF", {16'h0, pad_oe},  32'hFFFF);
 
         /* --- PHASE 2: all pads point at hp1 (10 repeated) --- */
-        apb_write(11'h710, 32'hAAAA, 4'hF);
-        apb_write(11'h714, 32'hAAAA, 4'hF);
+        apb_write(`REG(11'h010), 32'hAAAA, 4'hF);
+        apb_write(`REG(11'h014), 32'hAAAA, 4'hF);
         repeat (3) @(posedge sysclk); #1;
         expect_eq32("pad_out for all-hp1 = 5A5A", {16'h0, pad_out}, 32'h5A5A);
 
         /* --- PHASE 3: all pads point at hp2 (11 repeated) --- */
-        apb_write(11'h710, 32'hFFFF, 4'hF);
-        apb_write(11'h714, 32'hFFFF, 4'hF);
+        apb_write(`REG(11'h010), 32'hFFFF, 4'hF);
+        apb_write(`REG(11'h014), 32'hFFFF, 4'hF);
         repeat (3) @(posedge sysclk); #1;
         expect_eq32("pad_out for all-hp2 = FFFF", {16'h0, pad_out}, 32'hFFFF);
 
         /* --- PHASE 4: mix — pads [0..3]=hp0, [4..7]=hp1, [8..11]=hp2,
                                 [12..15]=attoio (=0 in reset) --- */
-        apb_write(11'h710, 32'hAA55, 4'hF);        // pads 0-3 = 01, 4-7 = 10
-        apb_write(11'h714, 32'h00FF, 4'hF);        // pads 8-11 = 11, 12-15 = 00
+        apb_write(`REG(11'h010), 32'hAA55, 4'hF);        // pads 0-3 = 01, 4-7 = 10
+        apb_write(`REG(11'h014), 32'h00FF, 4'hF);        // pads 8-11 = 11, 12-15 = 00
         hp0_out = 16'h000F;  hp0_oe = 16'h000F;
         hp1_out = 16'h00F0;  hp1_oe = 16'h00F0;
         hp2_out = 16'h0F00;  hp2_oe = 16'h0F00;
@@ -169,7 +170,7 @@ module tb_pinmux;
         expect_eq32("hp2_in mirrors pad_in", {16'h0, hp2_in}, 32'hA5A5);
 
         /* --- PHASE 6: VERSION register --- */
-        apb_read(11'h70C, rd);
+        apb_read(`REG(11'h00c), rd);
         expect_eq32("VERSION = 01_00_00_00", rd, 32'h01000000);
 
         $display("ALL PINMUX TESTS PASSED");

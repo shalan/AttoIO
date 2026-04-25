@@ -8,6 +8,7 @@
 /******************************************************************************/
 
 `timescale 1ns/1ps
+`include "attoio_variant.vh"
 
 `ifndef FW_HEX
  `define FW_HEX "build/sw/bldc6/bldc6.hex"
@@ -22,7 +23,7 @@ module tb_bldc6;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [10:0] PADDR;
+    reg  [`AW-1:0] PADDR;
     reg         PSEL, PENABLE, PWRITE;
     reg  [31:0] PWDATA;
     reg  [3:0]  PSTRB;
@@ -43,7 +44,7 @@ module tb_bldc6;
         div_cnt <= (div_cnt == CLK_DIV - 1) ? 0 : div_cnt + 1;
     end
 
-    attoio_macro u_dut (
+    `DUT_MOD u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
         .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
         .PWDATA(PWDATA), .PSTRB(PSTRB),
@@ -60,7 +61,7 @@ module tb_bldc6;
 
 `include "apb_host.vh"
 
-    task wait_for_mailbox(input [10:0] addr, input [31:0] expected,
+    task wait_for_mailbox(input [`AW-1:0] addr, input [31:0] expected,
                           input integer max_tries);
         integer tries;
         reg [31:0] val;
@@ -77,7 +78,7 @@ module tb_bldc6;
         end
     endtask
 
-    task wait_for_at_least(input [10:0] addr, input [31:0] threshold,
+    task wait_for_at_least(input [`AW-1:0] addr, input [31:0] threshold,
                            input integer max_tries);
         integer tries;
         reg [31:0] val;
@@ -139,8 +140,8 @@ module tb_bldc6;
             apb_write(i * 4, fw_image[i], 4'hF);
 
         $display("--- releasing IOP reset ---");
-        apb_write(11'h708, 32'h0, 4'hF);
-        wait_for_mailbox(11'h608, 32'hC0DEC0DE, 50000);
+        apb_write(`REG(11'h008), 32'h0, 4'hF);
+        wait_for_mailbox(`MBX(11'h008), 32'hC0DEC0DE, 50000);
         $display("  firmware armed Hall wake + gate outputs, WFI");
 
         expected_count = 0;
@@ -154,13 +155,13 @@ module tb_bldc6;
                 /* Count is the "done" sentinel — ISR writes it last,
                  * so once count bumps we're guaranteed idx and gate
                  * are already committed.  Tight reads OK. */
-                wait_for_at_least(11'h600, expected_count, 5000);
+                wait_for_at_least(`MBX(11'h000), expected_count, 5000);
 
                 expected_idx  = s;
                 expected_pads = expect_gate[s];
 
-                apb_read(11'h604, mb1);
-                apb_read(11'h60C, mb3);
+                apb_read(`MBX(11'h004), mb1);
+                apb_read(`MBX(11'h00c), mb3);
 
                 if (mb1 !== {29'h0, expected_idx[2:0]}) begin
                     $display("FAIL rev %0d step %0d: mailbox[1] = %08h != idx %0d",

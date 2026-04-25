@@ -21,6 +21,7 @@
 /******************************************************************************/
 
 `timescale 1ns/1ps
+`include "attoio_variant.vh"
 
 `ifndef FW_HEX
  `define FW_HEX "build/sw/uart_tx/uart_tx.hex"
@@ -40,7 +41,7 @@ module tb_coexist;
     reg         clk_iop = 0;
     reg         rst_n = 0;
 
-    reg  [10:0] PADDR = 0;
+    reg  [`AW-1:0] PADDR = 0;
     reg         PSEL = 0, PENABLE = 0, PWRITE = 0;
     reg  [31:0] PWDATA = 0;
     reg  [3:0]  PSTRB = 0;
@@ -65,7 +66,7 @@ module tb_coexist;
         div_cnt <= (div_cnt == CLK_DIV - 1) ? 0 : div_cnt + 1;
     end
 
-    attoio_macro u_dut (
+    `DUT_MOD u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
         .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
         .PWDATA(PWDATA), .PSTRB(PSTRB),
@@ -90,7 +91,7 @@ module tb_coexist;
     );
 
     // APB helpers
-    task apb_write(input [10:0] a, input [31:0] d, input [3:0] s);
+    task apb_write(input [`AW-1:0] a, input [31:0] d, input [3:0] s);
         begin
             @(posedge sysclk); #1;
             PADDR = a; PWDATA = d; PSTRB = s; PWRITE = 1; PSEL = 1;
@@ -102,7 +103,7 @@ module tb_coexist;
         end
     endtask
 
-    task apb_read(input [10:0] a, output [31:0] d);
+    task apb_read(input [`AW-1:0] a, output [31:0] d);
         begin
             @(posedge sysclk); #1;
             PADDR = a; PWRITE = 0; PSEL = 1;
@@ -171,15 +172,15 @@ module tb_coexist;
         $display("--- programming PINMUX: pads 2,3,4 -> hp0 ---");
         // pinmux bits: pad p uses bits [2p+:2], 2'b01 = hp0
         // pads 2, 3, 4 -> 01_01_01 at bits 4, 6, 8 = shifted into LO word
-        apb_write(11'h710, (32'b01 << 4) | (32'b01 << 6) | (32'b01 << 8), 4'hF);
-        apb_read (11'h710, rd);
+        apb_write(`REG(11'h010), (32'b01 << 4) | (32'b01 << 6) | (32'b01 << 8), 4'hF);
+        apb_read (`REG(11'h010), rd);
         if (rd !== 32'h00000150) begin
             $display("FAIL: PINMUX_LO readback got=%08h exp=00000150", rd);
             $fatal;
         end
 
         $display("--- releasing IOP reset + starting host hp0 wiggle ---");
-        apb_write(11'h708, 32'h0, 4'hF);
+        apb_write(`REG(11'h008), 32'h0, 4'hF);
         hp_active = 1'b1;
 
         // Wait for UART traffic to finish (sentinel at mbox[0])
@@ -188,7 +189,7 @@ module tb_coexist;
             reg [31:0] s;
             w = 0; s = 0;
             while (s !== 32'hD0D0D0D0 && w < 100000) begin
-                apb_read(11'h600, s);
+                apb_read(`MBX(11'h000), s);
                 w = w + 1;
             end
             if (s !== 32'hD0D0D0D0) begin

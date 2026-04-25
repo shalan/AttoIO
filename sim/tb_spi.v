@@ -9,6 +9,7 @@
 /******************************************************************************/
 
 `timescale 1ns/1ps
+`include "attoio_variant.vh"
 
 `ifndef FW_HEX
  `define FW_HEX "build/sw/spi_master/spi_master.hex"
@@ -23,7 +24,7 @@ module tb_spi;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [10:0] PADDR;
+    reg  [`AW-1:0] PADDR;
     reg         PSEL;
     reg         PENABLE;
     reg         PWRITE;
@@ -53,7 +54,7 @@ module tb_spi;
         div_cnt <= (div_cnt == CLK_DIV - 1) ? 0 : div_cnt + 1;
     end
 
-    attoio_macro u_dut (
+    `DUT_MOD u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
         .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
         .PWDATA(PWDATA), .PSTRB(PSTRB),
@@ -78,7 +79,7 @@ module tb_spi;
 
     /* ---- Host bus tasks ---- */
 `include "apb_host.vh"
-    task wait_for_mailbox(input [10:0] addr, input [31:0] expected, input integer max_tries);
+    task wait_for_mailbox(input [`AW-1:0] addr, input [31:0] expected, input integer max_tries);
         integer tries;
         reg [31:0] val;
         begin
@@ -120,12 +121,12 @@ module tb_spi;
             apb_write(i * 4, fw_image[i], 4'hF);
 
         $display("--- releasing IOP reset ---");
-        apb_write(11'h708, 32'h0, 4'hF);
+        apb_write(`REG(11'h008), 32'h0, 4'hF);
 
         /* Wait for the "done" sentinel. 4 bytes * 16 clk_iop = 64 cycles
          * of shifting + some overhead; a few thousand host polls is
          * plenty of budget. */
-        wait_for_mailbox(11'h600, 32'hA5A55A5A, 20000);
+        wait_for_mailbox(`MBX(11'h000), 32'hA5A55A5A, 20000);
         $display("  firmware signalled 'SPI done'");
 
         /* Check what the firmware transmitted (mailbox[12..15], packed
@@ -134,7 +135,7 @@ module tb_spi;
         expected_tx[0] = 8'hDE; expected_tx[1] = 8'hAD;
         expected_tx[2] = 8'hBE; expected_tx[3] = 8'hEF;
 
-        apb_read(11'h60C, rd);
+        apb_read(`MBX(11'h00c), rd);
         for (i = 0; i < 4; i = i + 1) begin
             reg [7:0] got_tx;
             got_tx = rd[i*8 +: 8];
@@ -154,7 +155,7 @@ module tb_spi;
         /* Check the master RX (mailbox[8..11], packed @ 0x208). */
         expected_rx[0] = 8'h11; expected_rx[1] = 8'h22;
         expected_rx[2] = 8'h33; expected_rx[3] = 8'h44;
-        apb_read(11'h608, rd);
+        apb_read(`MBX(11'h008), rd);
         for (i = 0; i < 4; i = i + 1) begin
             reg [7:0] got_rx;
             got_rx = rd[i*8 +: 8];

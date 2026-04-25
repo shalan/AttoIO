@@ -9,6 +9,7 @@
 /******************************************************************************/
 
 `timescale 1ns/1ps
+`include "attoio_variant.vh"
 
 `ifndef FW_HEX
  `define FW_HEX "build/sw/psg3/psg3.hex"
@@ -29,7 +30,7 @@ module tb_psg3;
     reg         clk_iop = 0;
     reg         rst_n   = 0;
 
-    reg  [10:0] PADDR;
+    reg  [`AW-1:0] PADDR;
     reg         PSEL, PENABLE, PWRITE;
     reg  [31:0] PWDATA;
     reg  [3:0]  PSTRB;
@@ -50,7 +51,7 @@ module tb_psg3;
         div_cnt <= (div_cnt == CLK_DIV - 1) ? 0 : div_cnt + 1;
     end
 
-    attoio_macro u_dut (
+    `DUT_MOD u_dut (
         .sysclk(sysclk), .clk_iop(clk_iop), .rst_n(rst_n),
         .PADDR(PADDR), .PSEL(PSEL), .PENABLE(PENABLE), .PWRITE(PWRITE),
         .PWDATA(PWDATA), .PSTRB(PSTRB),
@@ -103,7 +104,7 @@ module tb_psg3;
         $display("--- tb_psg3: loading firmware ---");
         for (i = 0; i < 256; i = i + 1)
             apb_write(i * 4, fw_image[i], 4'hF);
-        apb_write(11'h708, 32'h0, 4'hF);
+        apb_write(`REG(11'h008), 32'h0, 4'hF);
 
         /* Wait for armed sentinel, then open window. */
         begin : arm_wait
@@ -111,7 +112,7 @@ module tb_psg3;
             reg [31:0] val;
             tries = 0;
             while (tries < 5000) begin
-                apb_read(11'h608, val);
+                apb_read(`MBX(11'h008), val);
                 if (val === 32'hC0DEC0DE) disable arm_wait;
                 tries = tries + 1;
             end
@@ -126,7 +127,7 @@ module tb_psg3;
         #2500000;
         window_open = 1'b0;
 
-        apb_read(11'h60C, rd);
+        apb_read(`MBX(11'h00c), rd);
         if (rd !== 32'h5A5ED0DE) begin
             $display("FAIL: done sentinel = %08h, expected 5A5ED0DE", rd);
             $fatal;

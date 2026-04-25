@@ -27,13 +27,10 @@
 
 #include <stdint.h>
 
-#define MMIO_BASE    0x00000700u
-#define GPIO_OUT_SET (*(volatile uint32_t *)(MMIO_BASE + 0x0C))
-#define GPIO_OUT_CLR (*(volatile uint32_t *)(MMIO_BASE + 0x10))
-#define WAKE_FLAGS   (*(volatile uint32_t *)(MMIO_BASE + 0x64))
-
-#define MB_BASE      0x00000600u
-#define MAILBOX_W32  ((volatile uint32_t *)(MB_BASE))
+/* Variant-aware addresses via attoio.h.  ATTOIO_CFSRAM is set by the
+ * Makefile when VARIANT=cfsram; otherwise the DFFRAM map applies.  All
+ * the symbols we use (MAILBOX_W32, GPIO_OUT_SET, ...) come from there. */
+#include "../attoio.h"
 
 static const uint32_t lookup[6] = {
     0x0240, 0x0120, 0x0060, 0x0090, 0x0210, 0x0180
