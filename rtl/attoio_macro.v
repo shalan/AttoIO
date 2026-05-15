@@ -384,12 +384,24 @@ module attoio_macro #(
     assign irq_to_host = irq_to_host_ctrl | wdt_host_alert;
 
     // ====================================================================
-    // SPI shift helper — synchronize pad_in onto clk_iop first
+    // SPI / TIMER shared pad_in synchronizer — 2 flops on clk_iop.
+    //
+    // pad_in is asynchronous to clk_iop (it crosses from the pad domain).
+    // A single flop is insufficient for metastability hardening — modern
+    // ASIC practice requires 2 flops minimum.  pad_in_iop_sync1 captures
+    // the raw pad on the first clk_iop edge, pad_in_iop_sync is the
+    // settled value the rest of the IOP-side logic reads.
     // ====================================================================
+    reg [NGPIO-1:0] pad_in_iop_sync1;
     reg [NGPIO-1:0] pad_in_iop_sync;
     always @(posedge clk_iop or negedge rst_n) begin
-        if (!rst_n) pad_in_iop_sync <= {NGPIO{1'b0}};
-        else        pad_in_iop_sync <= pad_in;
+        if (!rst_n) begin
+            pad_in_iop_sync1 <= {NGPIO{1'b0}};
+            pad_in_iop_sync  <= {NGPIO{1'b0}};
+        end else begin
+            pad_in_iop_sync1 <= pad_in;
+            pad_in_iop_sync  <= pad_in_iop_sync1;
+        end
     end
 
     attoio_spi #(.NGPIO(NGPIO)) u_spi (
