@@ -316,7 +316,9 @@ module attoio_macro #(
         .pad_in     (pad_in),
         .pad_out    (gpio_pad_out),
         .pad_oe     (gpio_pad_oe),
-        .pad_ctl    (pad_ctl)
+        .pad_ctl    (pad_ctl),
+
+        .pad_in_sync (gpio_pad_in_sync)
     );
 
     /* AttoIO-internal drive: merge GPIO and Timer override per pad */
@@ -345,10 +347,15 @@ module attoio_macro #(
         assign pad_oe[gp]  = poe;
     end endgenerate
 
-    /* Host-peripheral bundles always see pad_in (no gating) */
-    assign hp0_in = pad_in;
-    assign hp1_in = pad_in;
-    assign hp2_in = pad_in;
+    /* Host-peripheral bundles see the GPIO's 2-flop synchronised pad
+     * view (sysclk domain).  The host SoC's bus runs on sysclk too, so
+     * by the time hp{0,1,2}_in cross to the host its state is already
+     * metastability-hardened.  Drives off attoio_gpio's internal
+     * pad_in_sync2 — zero extra FFs vs the bare pad_in fan-out. */
+    wire [NGPIO-1:0] gpio_pad_in_sync;
+    assign hp0_in = gpio_pad_in_sync;
+    assign hp1_in = gpio_pad_in_sync;
+    assign hp2_in = gpio_pad_in_sync;
 
     // ====================================================================
     // Control — doorbells + IOP_CTRL + PINMUX + VERSION

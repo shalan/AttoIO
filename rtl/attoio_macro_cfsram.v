@@ -319,7 +319,9 @@ module attoio_macro_cfsram #(
         .pad_in     (pad_in),
         .pad_out    (gpio_pad_out),
         .pad_oe     (gpio_pad_oe),
-        .pad_ctl    (pad_ctl)
+        .pad_ctl    (pad_ctl),
+
+        .pad_in_sync (gpio_pad_in_sync)
     );
 
     /* AttoIO-internal drive: merge GPIO and Timer override per pad */
@@ -348,10 +350,12 @@ module attoio_macro_cfsram #(
         assign pad_oe[gp]  = poe;
     end endgenerate
 
-    /* Host-peripheral bundles always see pad_in (no gating) */
-    assign hp0_in = pad_in;
-    assign hp1_in = pad_in;
-    assign hp2_in = pad_in;
+    /* Host-peripheral bundles see the GPIO's 2-flop synchronised pad
+     * view (sysclk domain).  See attoio_macro.v for the rationale. */
+    wire [NGPIO-1:0] gpio_pad_in_sync;
+    assign hp0_in = gpio_pad_in_sync;
+    assign hp1_in = gpio_pad_in_sync;
+    assign hp2_in = gpio_pad_in_sync;
 
     // ====================================================================
     // Control — doorbells + IOP_CTRL + PINMUX + VERSION

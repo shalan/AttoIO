@@ -52,6 +52,9 @@ can adopt a different "personality" per application without re-taping out.
     `NGPIO`-wide array of `out/oe/in`.  Slot `p` is bit-parallel with
     pad `p`.  SoC-side wiring aggregates host peripherals (e.g. host
     UARTs, SPIs, I²Cs) into whichever slot the integrator chooses.
+    `hp{0,1,2}_in` is driven from a **2-flop sysclk-domain
+    synchroniser** of the raw pad inputs, so downstream host logic
+    can sample it directly without an additional sync stage.
   - **PINMUX** register (host-writable via APB) selects per-pad drive
     source: AttoIO / hp0 / hp1 / hp2.  Reset = all-zeros → AttoIO-owned
     (backward compatible with v0.9).
