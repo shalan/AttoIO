@@ -59,7 +59,14 @@ module attoio_gpio #(
     input  wire [NGPIO-1:0]        pad_in,
     output wire [NGPIO-1:0]        pad_out,
     output wire [NGPIO-1:0]        pad_oe,
-    output wire [NGPIO*8-1:0]      pad_ctl
+    output wire [NGPIO*8-1:0]      pad_ctl,
+
+    // ---- Synchronised pad_in view (sysclk, 2-flop chain) ----
+    // Exposes the back of the local 2-flop synchroniser so the
+    // top-level macro can route a metastability-hardened pad_in to
+    // hp{0,1,2}_in without instantiating a second sync chain.  Same
+    // FFs the GPIO read path and wake edge-detect already use.
+    output wire [NGPIO-1:0]        pad_in_sync
 );
 
     initial begin
@@ -98,6 +105,9 @@ module attoio_gpio #(
             pad_in_prev  <= pad_in_sync2;
         end
     end
+
+    // Expose the 2nd-stage flop to the macro for hp_in fan-out.
+    assign pad_in_sync = pad_in_sync2;
 
     // ====================================================================
     // Wake system (sysclk domain)

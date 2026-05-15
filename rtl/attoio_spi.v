@@ -88,17 +88,36 @@ module attoio_spi #(
     wire shift_phase   = cfg_cpha ? 1'b1 : 1'b0;
 
     // ====================================================================
+    // Deferred MISO sample.
+    //
+    // pad_in_sync is a 2-flop synchroniser fed from the raw pad in
+    // attoio_macro.v, so the sampled value carries 2 clk_iop cycles of
+    // latency relative to the live pin.  The shift engine schedules
+    // the sample at capture_phase (one clk_iop edge after the SCK
+    // toggle) by setting sample_pending; the actual rx_shift write
+    // happens on the next clk_iop edge.  That makes the MISO capture
+    // line up with the sync chain even though the sync is deeper.
+    // ====================================================================
+    reg       sample_pending;
+    reg [2:0] sample_bit_idx;
+
+    // ====================================================================
     // Shift engine (clk_iop)
     // ====================================================================
     always @(posedge clk_iop or negedge rst_n) begin
         if (!rst_n) begin
-            tx_shift <= 8'h0;
-            rx_shift <= 8'h0;
-            bit_cnt  <= 4'h0;
-            busy     <= 1'b0;
-            sck_r    <= 1'b0;
-            spi_cfg  <= 8'h0;
+            tx_shift       <= 8'h0;
+            rx_shift       <= 8'h0;
+            bit_cnt        <= 4'h0;
+            busy           <= 1'b0;
+            sck_r          <= 1'b0;
+            spi_cfg        <= 8'h0;
+            sample_pending <= 1'b0;
+            sample_bit_idx <= 3'h0;
         end else begin
+            // Default: clear pending so it only fires once.
+            sample_pending <= 1'b0;
+
             // Register writes
             if (mmio_wen && mmio_sel) begin
                 case (mmio_woff)
@@ -122,9 +141,10 @@ module attoio_spi #(
                     // Toggle SCK
                     sck_r <= ~sck_r;
                 end else begin
-                    // Toggle SCK back + capture MISO + advance
-                    sck_r <= ~sck_r;
-                    rx_shift[bit_idx] <= pad_in_sync[cfg_miso_pin];
+                    // Toggle SCK back + schedule MISO capture next cycle.
+                    sck_r          <= ~sck_r;
+                    sample_pending <= 1'b1;
+                    sample_bit_idx <= bit_idx;
                 end
 
                 bit_cnt <= bit_cnt + 4'd1;
@@ -133,6 +153,12 @@ module attoio_spi #(
                     busy  <= 1'b0;
                     sck_r <= cfg_cpol;   // return to idle
                 end
+            end
+
+            // Deferred sample fires one clk_iop edge after capture_phase,
+            // absorbing the extra cycle introduced by the 2-flop sync.
+            if (sample_pending) begin
+                rx_shift[sample_bit_idx] <= pad_in_sync[cfg_miso_pin];
             end
         end
     end

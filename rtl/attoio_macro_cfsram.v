@@ -319,7 +319,9 @@ module attoio_macro_cfsram #(
         .pad_in     (pad_in),
         .pad_out    (gpio_pad_out),
         .pad_oe     (gpio_pad_oe),
-        .pad_ctl    (pad_ctl)
+        .pad_ctl    (pad_ctl),
+
+        .pad_in_sync (gpio_pad_in_sync)
     );
 
     /* AttoIO-internal drive: merge GPIO and Timer override per pad */
@@ -348,10 +350,12 @@ module attoio_macro_cfsram #(
         assign pad_oe[gp]  = poe;
     end endgenerate
 
-    /* Host-peripheral bundles always see pad_in (no gating) */
-    assign hp0_in = pad_in;
-    assign hp1_in = pad_in;
-    assign hp2_in = pad_in;
+    /* Host-peripheral bundles see the GPIO's 2-flop synchronised pad
+     * view (sysclk domain).  See attoio_macro.v for the rationale. */
+    wire [NGPIO-1:0] gpio_pad_in_sync;
+    assign hp0_in = gpio_pad_in_sync;
+    assign hp1_in = gpio_pad_in_sync;
+    assign hp2_in = gpio_pad_in_sync;
 
     // ====================================================================
     // Control — doorbells + IOP_CTRL + PINMUX + VERSION
@@ -387,12 +391,19 @@ module attoio_macro_cfsram #(
     assign irq_to_host = irq_to_host_ctrl | wdt_host_alert;
 
     // ====================================================================
-    // SPI shift helper — synchronize pad_in onto clk_iop first
+    // SPI / TIMER shared pad_in synchronizer — 2 flops on clk_iop.
+    // See attoio_macro.v for the metastability-hardening rationale.
     // ====================================================================
+    reg [NGPIO-1:0] pad_in_iop_sync1;
     reg [NGPIO-1:0] pad_in_iop_sync;
     always @(posedge clk_iop or negedge rst_n) begin
-        if (!rst_n) pad_in_iop_sync <= {NGPIO{1'b0}};
-        else        pad_in_iop_sync <= pad_in;
+        if (!rst_n) begin
+            pad_in_iop_sync1 <= {NGPIO{1'b0}};
+            pad_in_iop_sync  <= {NGPIO{1'b0}};
+        end else begin
+            pad_in_iop_sync1 <= pad_in;
+            pad_in_iop_sync  <= pad_in_iop_sync1;
+        end
     end
 
     attoio_spi #(.NGPIO(NGPIO)) u_spi (
